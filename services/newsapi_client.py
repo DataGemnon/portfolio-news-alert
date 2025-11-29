@@ -14,7 +14,15 @@ class NewsAPIClient:
     
     def __init__(self):
         self.client = NewsApiClient(api_key=settings.newsapi_key)
-        self.redis_client = redis.from_url(settings.redis_url) if settings.redis_url else None
+        
+        # Redis optionnel
+        if settings.redis_url:
+            try:
+                self.redis_client = redis.from_url(settings.redis_url)
+            except:
+                self.redis_client = None
+        else:
+            self.redis_client = None
         
         # Premium sources for financial/macro news
         self.premium_sources = [
@@ -58,11 +66,14 @@ class NewsAPIClient:
         """
         cache_key = f"newsapi_macro:{datetime.utcnow().strftime('%Y%m%d%H')}"
         
-        # Check cache
+        # Check cache (si Redis disponible)
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
         
         from_date = (datetime.utcnow() - timedelta(hours=hours)).strftime('%Y-%m-%dT%H:%M:%S')
         all_articles = []
@@ -108,9 +119,12 @@ class NewsAPIClient:
         # Limit results
         unique_articles = unique_articles[:max_articles]
         
-        # Cache for 1 hour
+        # Cache for 1 hour (si Redis disponible)
         if self.redis_client:
-            self.redis_client.setex(cache_key, 3600, json.dumps(unique_articles))
+            try:
+                self.redis_client.setex(cache_key, 3600, json.dumps(unique_articles))
+            except:
+                pass
         
         return unique_articles
     
@@ -119,9 +133,12 @@ class NewsAPIClient:
         cache_key = f"newsapi_fed:{datetime.utcnow().strftime('%Y%m%d%H')}"
         
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
         
         from_date = (datetime.utcnow() - timedelta(hours=hours)).strftime('%Y-%m-%dT%H:%M:%S')
         
@@ -140,9 +157,12 @@ class NewsAPIClient:
             for article in articles:
                 article['macro_category'] = 'Federal Reserve'
             
-            # Cache for 1 hour
+            # Cache for 1 hour (si Redis disponible)
             if self.redis_client:
-                self.redis_client.setex(cache_key, 3600, json.dumps(articles))
+                try:
+                    self.redis_client.setex(cache_key, 3600, json.dumps(articles))
+                except:
+                    pass
             
             return articles
             

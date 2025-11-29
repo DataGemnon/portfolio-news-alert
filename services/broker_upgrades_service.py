@@ -14,7 +14,15 @@ class BrokerUpgradesService:
     
     def __init__(self):
         self.fmp = FMPClient()
-        self.redis_client = redis.from_url(settings.redis_url) if settings.redis_url else None
+        
+        # Redis optionnel
+        if settings.redis_url:
+            try:
+                self.redis_client = redis.from_url(settings.redis_url)
+            except:
+                self.redis_client = None
+        else:
+            self.redis_client = None
         
         # Major sectors/indices to monitor for market opportunities
         self.watchlist_symbols = [
@@ -53,12 +61,15 @@ class BrokerUpgradesService:
         """
         cache_key = f"broker_upgrades:{datetime.utcnow().strftime('%Y%m%d%H')}"
         
-        # Check cache (1 hour)
+        # Check cache (1 hour) - si Redis disponible
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                cached_data = json.loads(cached)
-                return self._separate_portfolio_vs_market(cached_data, set(portfolio_symbols))
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    cached_data = json.loads(cached)
+                    return self._separate_portfolio_vs_market(cached_data, set(portfolio_symbols))
+            except:
+                pass
         
         # Combine portfolio symbols with watchlist
         all_symbols = list(set(portfolio_symbols + self.watchlist_symbols))
@@ -148,9 +159,12 @@ class BrokerUpgradesService:
         # Sort by score (highest first)
         all_upgrades.sort(key=lambda x: (x['score'], x['timestamp']), reverse=True)
         
-        # Cache for 1 hour
+        # Cache for 1 hour (si Redis disponible)
         if self.redis_client and all_upgrades:
-            self.redis_client.setex(cache_key, 3600, json.dumps(all_upgrades, default=str))
+            try:
+                self.redis_client.setex(cache_key, 3600, json.dumps(all_upgrades, default=str))
+            except:
+                pass
         
         print(f"  Found {len(all_upgrades)} recent upgrades")
         

@@ -8,7 +8,16 @@ import redis
 class AIAnalyzer:
     def __init__(self):
         self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-        self.redis_client = redis.from_url(settings.redis_url)
+        
+        # Redis optionnel (pas disponible sur Streamlit Cloud)
+        if settings.redis_url:
+            try:
+                self.redis_client = redis.from_url(settings.redis_url)
+            except:
+                self.redis_client = None
+        else:
+            self.redis_client = None
+        
         self.model = "claude-sonnet-4-20250514"
     
     def analyze_news_impact(self, news_item: Dict, user_holding: Optional[Dict] = None) -> Dict:
@@ -22,11 +31,15 @@ class AIAnalyzer:
         Returns:
             Dict with impact_score, sentiment, urgency, category, summary, affected_sector
         """
-        # Check cache
+        # Check cache (si Redis disponible)
         cache_key = f"analysis:{news_item.get('url', '')}"
-        cached = self.redis_client.get(cache_key)
-        if cached:
-            return json.loads(cached)
+        if self.redis_client:
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass  # Pas grave si cache non dispo
         
         # Prepare context
         symbol = news_item.get('symbol', 'Unknown')
@@ -109,83 +122,4 @@ Do not include any text before or after the JSON."""
         try:
             message = self.client.messages.create(
                 model=self.model,
-                max_tokens=1000,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            # Extract response
-            response_text = message.content[0].text.strip()
-            
-            # Parse JSON (remove any markdown fences if present)
-            response_text = response_text.replace('```json', '').replace('```', '').strip()
-            result = json.loads(response_text)
-            
-            # Validate and set defaults
-            result.setdefault('impact_score', 5)
-            result.setdefault('sentiment', 0)
-            result.setdefault('urgency', 'Days')
-            result.setdefault('category', 'Other')
-            result.setdefault('summary', title[:150])
-            result.setdefault('affected_sector', 'Individual Stock Only')
-            
-            # Cache for 24 hours
-            self.redis_client.setex(cache_key, 86400, json.dumps(result))
-            
-            return result
-            
-        except Exception as e:
-            print(f"AI Analysis Error: {e}")
-            # Return default analysis on error
-            # Extract first 10 words from title
-            words = title.split()[:10] if title else []
-            short_summary = ' '.join(words) if words else 'News update'
-            
-            return {
-                'impact_score': 5,
-                'sentiment': 0,
-                'urgency': 'Days',
-                'category': 'Other',
-                'summary': short_summary,
-                'keywords': 'market, update, news',
-                'affected_sector': 'Individual Stock Only'
-            }
-    
-    def batch_analyze(self, news_items: list[Dict], user_holdings: Dict[str, Dict] = None) -> list[Dict]:
-        """
-        Analyze multiple news items
-        
-        Args:
-            news_items: List of news dicts
-            user_holdings: Dict mapping symbol -> holding info
-            
-        Returns:
-            List of news items with 'analysis' key added
-        """
-        results = []
-        
-        for news in news_items:
-            symbol = news.get('symbol', '')
-            holding = user_holdings.get(symbol) if user_holdings else None
-            
-            analysis = self.analyze_news_impact(news, holding)
-            news_with_analysis = {**news, 'analysis': analysis}
-            results.append(news_with_analysis)
-        
-        return results
-    
-    def should_notify(self, analysis: Dict) -> bool:
-        """
-        Determine if the news warrants a notification
-        Based on impact score and urgency
-        """
-        impact_score = analysis.get('impact_score', 0)
-        urgency = analysis.get('urgency', 'Days')
-        
-        # High impact or urgent news should notify
-        if impact_score >= settings.impact_threshold:
-            return True
-        
-        if urgency in ['Immediate', 'Hours'] and impact_score >= 4:
-            return True
-        
-        return False
+                max_token

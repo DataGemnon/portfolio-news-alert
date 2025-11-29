@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     
     # URLs
     fmp_base_url: str = Field(default="https://financialmodelingprep.com/api", env="FMP_BASE_URL")
-    redis_url: str = Field(default=None, env="REDIS_URL")
+    redis_url: str = Field(default="", env="REDIS_URL")
     
     # Email config
     smtp_host: str = Field(default="smtp.gmail.com", env="SMTP_HOST")

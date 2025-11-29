@@ -13,7 +13,14 @@ class YahooFinanceClient:
     """
     
     def __init__(self):
-        self.redis_client = redis.from_url(settings.redis_url) if settings.redis_url else None
+        # Redis optionnel
+        if settings.redis_url:
+            try:
+                self.redis_client = redis.from_url(settings.redis_url)
+            except:
+                self.redis_client = None
+        else:
+            self.redis_client = None
         
         # Major indices to monitor
         self.indices = {
@@ -34,9 +41,12 @@ class YahooFinanceClient:
         
         # Cache for 5 minutes (market data changes frequently)
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
         
         snapshot = {}
         
@@ -66,9 +76,12 @@ class YahooFinanceClient:
                 print(f"Error fetching {symbol}: {e}")
                 continue
         
-        # Cache for 5 minutes
+        # Cache for 5 minutes (si Redis disponible)
         if self.redis_client and snapshot:
-            self.redis_client.setex(cache_key, 300, json.dumps(snapshot))
+            try:
+                self.redis_client.setex(cache_key, 300, json.dumps(snapshot))
+            except:
+                pass
         
         return snapshot
     

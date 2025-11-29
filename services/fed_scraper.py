@@ -15,7 +15,16 @@ class FedScraper:
     
     def __init__(self):
         self.base_url = "https://www.federalreserve.gov"
-        self.redis_client = redis.from_url(settings.redis_url) if settings.redis_url else None
+        
+        # Redis optionnel
+        if settings.redis_url:
+            try:
+                self.redis_client = redis.from_url(settings.redis_url)
+            except:
+                self.redis_client = None
+        else:
+            self.redis_client = None
+        
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
@@ -28,9 +37,12 @@ class FedScraper:
         cache_key = f"fed_releases:{datetime.utcnow().strftime('%Y%m%d')}"
         
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
         
         url = f"{self.base_url}/newsevents/pressreleases.htm"
         
@@ -99,9 +111,12 @@ class FedScraper:
                     print(f"Error parsing press release item: {e}")
                     continue
             
-            # Cache for 6 hours
+            # Cache for 6 hours (si Redis disponible)
             if self.redis_client and releases:
-                self.redis_client.setex(cache_key, 21600, json.dumps(releases))
+                try:
+                    self.redis_client.setex(cache_key, 21600, json.dumps(releases))
+                except:
+                    pass
             
             return releases
         
@@ -117,9 +132,12 @@ class FedScraper:
         cache_key = f"fed_fomc_calendar:{datetime.utcnow().strftime('%Y%m')}"
         
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
         
         url = f"{self.base_url}/monetarypolicy/fomccalendars.htm"
         
@@ -164,9 +182,12 @@ class FedScraper:
                     print(f"Error parsing FOMC calendar item: {e}")
                     continue
             
-            # Cache for 1 month
+            # Cache for 1 month (si Redis disponible)
             if self.redis_client and meetings:
-                self.redis_client.setex(cache_key, 2592000, json.dumps(meetings))
+                try:
+                    self.redis_client.setex(cache_key, 2592000, json.dumps(meetings))
+                except:
+                    pass
             
             return meetings
         
@@ -182,9 +203,12 @@ class FedScraper:
         cache_key = f"fed_speeches:{datetime.utcnow().strftime('%Y%m%d')}"
         
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
         
         url = f"{self.base_url}/newsevents/speeches.htm"
         
@@ -254,9 +278,12 @@ class FedScraper:
                     print(f"Error parsing speech item: {e}")
                     continue
             
-            # Cache for 6 hours
+            # Cache for 6 hours (si Redis disponible)
             if self.redis_client and speeches:
-                self.redis_client.setex(cache_key, 21600, json.dumps(speeches))
+                try:
+                    self.redis_client.setex(cache_key, 21600, json.dumps(speeches))
+                except:
+                    pass
             
             return speeches
         

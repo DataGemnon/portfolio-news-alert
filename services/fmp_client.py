@@ -10,7 +10,15 @@ class FMPClient:
     def __init__(self):
         self.api_key = settings.fmp_api_key
         self.base_url = settings.fmp_base_url
-        self.redis_client = redis.from_url(settings.redis_url) if settings.redis_url else None
+        
+        # Redis optionnel
+        if settings.redis_url:
+            try:
+                self.redis_client = redis.from_url(settings.redis_url)
+            except:
+                self.redis_client = None
+        else:
+            self.redis_client = None
         
         # 🆕 SOURCES DE HAUTE QUALITÉ UNIQUEMENT
         # Ces sources publient de vraies nouvelles financières, pas des opinions
@@ -180,11 +188,14 @@ class FMPClient:
         """
         cache_key = f"fmp_news:{','.join(tickers) if tickers else 'general'}:{datetime.utcnow().strftime('%Y%m%d%H')}"
         
-        # Check cache
+        # Check cache (si Redis disponible)
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
         
         if tickers:
             # Get news for specific tickers
@@ -215,9 +226,12 @@ class FMPClient:
         # Limiter au nombre demandé
         quality_news = quality_news[:limit]
         
-        # Cache for 1 hour
+        # Cache for 1 hour (si Redis disponible)
         if self.redis_client:
-            self.redis_client.setex(cache_key, 3600, json.dumps(quality_news))
+            try:
+                self.redis_client.setex(cache_key, 3600, json.dumps(quality_news))
+            except:
+                pass
         
         print(f"    Filtered {len(news)} → {len(quality_news)} quality news items")
         
@@ -228,16 +242,22 @@ class FMPClient:
         cache_key = f"fmp_press:{symbol}:{datetime.utcnow().strftime('%Y%m%d')}"
         
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
         
         params = {'limit': limit}
         releases = self._make_request(f'/v3/press-releases/{symbol}', params)
         
-        # Cache for 6 hours
+        # Cache for 6 hours (si Redis disponible)
         if self.redis_client:
-            self.redis_client.setex(cache_key, 21600, json.dumps(releases))
+            try:
+                self.redis_client.setex(cache_key, 21600, json.dumps(releases))
+            except:
+                pass
         
         return releases
     
@@ -249,9 +269,12 @@ class FMPClient:
         cache_key = f"fmp_price_target:{symbol}:{datetime.utcnow().strftime('%Y%m%d%H')}"
         
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
         
         # Get price targets
         targets = self._make_request(f'/v4/price-target', {'symbol': symbol})
@@ -265,9 +288,12 @@ class FMPClient:
             'rating_changes': upgrades if isinstance(upgrades, list) else []
         }
         
-        # Cache for 2 hours
+        # Cache for 2 hours (si Redis disponible)
         if self.redis_client:
-            self.redis_client.setex(cache_key, 7200, json.dumps(combined))
+            try:
+                self.redis_client.setex(cache_key, 7200, json.dumps(combined))
+            except:
+                pass
         
         return combined
     
@@ -276,15 +302,21 @@ class FMPClient:
         cache_key = f"fmp_estimates:{symbol}:{datetime.utcnow().strftime('%Y%m%d')}"
         
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
         
         estimates = self._make_request(f'/v3/analyst-estimates/{symbol}')
         
-        # Cache for 24 hours
+        # Cache for 24 hours (si Redis disponible)
         if self.redis_client:
-            self.redis_client.setex(cache_key, 86400, json.dumps(estimates))
+            try:
+                self.redis_client.setex(cache_key, 86400, json.dumps(estimates))
+            except:
+                pass
         
         return estimates
     
@@ -329,16 +361,22 @@ class FMPClient:
         cache_key = f"fmp_quote:{symbol}:{datetime.utcnow().strftime('%Y%m%d%H%M')}"
         
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
         
         quote = self._make_request(f'/v3/quote/{symbol}')
         result = quote[0] if isinstance(quote, list) and len(quote) > 0 else {}
         
-        # Cache for 5 minutes
+        # Cache for 5 minutes (si Redis disponible)
         if self.redis_client:
-            self.redis_client.setex(cache_key, 300, json.dumps(result))
+            try:
+                self.redis_client.setex(cache_key, 300, json.dumps(result))
+            except:
+                pass
         
         return result
     

@@ -14,7 +14,15 @@ class FREDClient:
     
     def __init__(self):
         self.client = Fred(api_key=settings.fred_api_key)
-        self.redis_client = redis.from_url(settings.redis_url) if settings.redis_url else None
+        
+        # Redis optionnel
+        if settings.redis_url:
+            try:
+                self.redis_client = redis.from_url(settings.redis_url)
+            except:
+                self.redis_client = None
+        else:
+            self.redis_client = None
         
         # Key economic indicators to monitor
         self.indicators = {
@@ -109,9 +117,12 @@ class FREDClient:
         cache_key = f"fred_latest:{datetime.utcnow().strftime('%Y%m%d')}"
         
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
         
         results = {}
         
@@ -149,9 +160,12 @@ class FREDClient:
                 print(f"Error fetching {series_id}: {e}")
                 continue
         
-        # Cache for 24 hours
+        # Cache for 24 hours (si Redis disponible)
         if self.redis_client:
-            self.redis_client.setex(cache_key, 86400, json.dumps(results))
+            try:
+                self.redis_client.setex(cache_key, 86400, json.dumps(results))
+            except:
+                pass
         
         return results
     
@@ -224,9 +238,12 @@ class FREDClient:
         cache_key = f"fred_yield_curve:{datetime.utcnow().strftime('%Y%m%d')}"
         
         if self.redis_client:
-            cached = self.redis_client.get(cache_key)
-            if cached:
-                return json.loads(cached)
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
         
         try:
             # Get 2-year and 10-year yields
@@ -247,9 +264,12 @@ class FREDClient:
                     'date': ten_year.index[-1].strftime('%Y-%m-%d')
                 }
                 
-                # Cache for 24 hours
+                # Cache for 24 hours (si Redis disponible)
                 if self.redis_client:
-                    self.redis_client.setex(cache_key, 86400, json.dumps(result))
+                    try:
+                        self.redis_client.setex(cache_key, 86400, json.dumps(result))
+                    except:
+                        pass
                 
                 return result
         
