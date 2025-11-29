@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     # URLs
     fmp_base_url: str = Field(default="https://financialmodelingprep.com/api", env="FMP_BASE_URL")
     redis_url: str = Field(default="", env="REDIS_URL")
+    database_url: str = Field(default="sqlite:///portfolio_news.db", env="DATABASE_URL")
     
     # Email config
     smtp_host: str = Field(default="smtp.gmail.com", env="SMTP_HOST")
@@ -51,7 +52,8 @@ def load_settings():
                 smtp_port=int(secrets.get("SMTP_PORT", "587")),
                 smtp_user=secrets.get("SMTP_USER", ""),
                 smtp_password=secrets.get("SMTP_PASSWORD", ""),
-                redis_url=secrets.get("REDIS_URL", None),
+                redis_url=secrets.get("REDIS_URL", ""),
+                database_url=secrets.get("DATABASE_URL", "sqlite:///portfolio_news.db"),
             )
         except Exception as e:
             print(f"Error loading Streamlit secrets: {e}")
