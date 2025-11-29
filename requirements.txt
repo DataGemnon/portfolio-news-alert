@@ -1,43 +1,12 @@
-# Core dependencies
-anthropic>=0.18.0
-sqlalchemy>=2.0.0
-requests>=2.31.0
-python-dotenv>=1.0.0
-schedule>=1.2.0
-
-# Financial APIs
-fredapi>=0.5.0
-yfinance>=0.2.0
-newsapi-python>=0.2.7
-
-# Data processing
-pandas>=2.0.0
-redis>=5.0.0
-
-# Web scraping
-beautifulsoup4>=4.12.0
-
-# Web interface
-streamlit>=1.29.0
-plotly>=5.18.0
-```
-
----
-
-## 📂 Structure verification
-
-Before you continue, please check :
-```
-portfolio-news-alert/
-├── .gitignore              ← New ✅
-├── .streamlit/
-│   └── secrets.toml        ← New ✅
-├── app.py
-├── main.py
-├── manage_portfolio.py
-├── requirements.txt        ← Modified ✅
-├── .env                    (not uploaded)
-├── portfolio_news.db       (not uploaded)
-├── config/
-├── models/
-└── services/
+anthropic==0.39.0
+sqlalchemy==2.0.23
+requests==2.31.0
+python-dotenv==1.0.0
+schedule==1.2.0
+fredapi==0.5.1
+yfinance==0.2.33
+newsapi-python==0.2.7
+pandas==2.1.4
+beautifulsoup4==4.12.2
+streamlit==1.29.0
+plotly==5.18.0
