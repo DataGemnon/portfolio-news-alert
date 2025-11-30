@@ -2,7 +2,11 @@ import anthropic
 import json
 from typing import Dict, Optional
 from config.settings import settings
-import redis
+
+try:
+    import redis
+except ImportError:
+    redis = None
 
 
 class AIAnalyzer:
@@ -10,7 +14,7 @@ class AIAnalyzer:
         self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
         
         # Redis optionnel (pas disponible sur Streamlit Cloud)
-        if settings.redis_url:
+        if settings.redis_url and redis is not None:
             try:
                 self.redis_client = redis.from_url(settings.redis_url)
             except:
@@ -39,12 +43,12 @@ class AIAnalyzer:
                 if cached:
                     return json.loads(cached)
             except:
-                pass  # Pas grave si cache non dispo
+                pass
         
         # Prepare context
         symbol = news_item.get('symbol', 'Unknown')
         title = news_item.get('title', '')
-        content = news_item.get('text', '')[:2000]  # Limit content length
+        content = news_item.get('text', '')[:2000]
         source = news_item.get('site', '')
         
         holding_context = ""
@@ -93,18 +97,10 @@ Provide a structured analysis with the following:
    - Other: Doesn't fit above categories
 
 5. **Summary**: Maximum 10 words - ultra-concise headline
-   - Use keywords: "Q4 earnings beat, guidance raised"
-   - NOT: "The company reported better than expected earnings..."
-   - Examples:
-     * "Beats Q3 EPS $2.50 vs $2.30 expected"
-     * "CEO resigns, stock down 8%"
-     * "FDA approves new drug, revenue boost expected"
-     * "Upgraded to Buy, $300 target"
 
 6. **Keywords**: 3-5 key terms (comma-separated)
-   - Example: "earnings beat, guidance up, revenue growth"
 
-7. **Affected Sector**: If this news impacts a broader sector beyond the single stock, name it (e.g., "Technology", "Banking", "Energy"). Otherwise, say "Individual Stock Only"
+7. **Affected Sector**: If this news impacts a broader sector beyond the single stock, name it. Otherwise, say "Individual Stock Only"
 
 Respond ONLY with valid JSON in this exact format:
 {{
@@ -114,7 +110,7 @@ Respond ONLY with valid JSON in this exact format:
     "category": "<category>",
     "summary": "<10 words max>",
     "keywords": "<3-5 keywords>",
-    "affected_sector": "<sector or 'Individual Stock Only'>"
+    "affected_sector": "<sector or Individual Stock Only>"
 }}
 
 Do not include any text before or after the JSON."""
@@ -122,4 +118,66 @@ Do not include any text before or after the JSON."""
         try:
             message = self.client.messages.create(
                 model=self.model,
-                max_token
+                max_tokens=1000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            response_text = message.content[0].text.strip()
+            response_text = response_text.replace('```json', '').replace('```', '').strip()
+            result = json.loads(response_text)
+            
+            result.setdefault('impact_score', 5)
+            result.setdefault('sentiment', 0)
+            result.setdefault('urgency', 'Days')
+            result.setdefault('category', 'Other')
+            result.setdefault('summary', title[:150])
+            result.setdefault('affected_sector', 'Individual Stock Only')
+            
+            if self.redis_client:
+                try:
+                    self.redis_client.setex(cache_key, 86400, json.dumps(result))
+                except:
+                    pass
+            
+            return result
+            
+        except Exception as e:
+            print(f"AI Analysis Error: {e}")
+            words = title.split()[:10] if title else []
+            short_summary = ' '.join(words) if words else 'News update'
+            
+            return {
+                'impact_score': 5,
+                'sentiment': 0,
+                'urgency': 'Days',
+                'category': 'Other',
+                'summary': short_summary,
+                'keywords': 'market, update, news',
+                'affected_sector': 'Individual Stock Only'
+            }
+    
+    def batch_analyze(self, news_items: list, user_holdings: Dict = None) -> list:
+        """Analyze multiple news items"""
+        results = []
+        
+        for news in news_items:
+            symbol = news.get('symbol', '')
+            holding = user_holdings.get(symbol) if user_holdings else None
+            analysis = self.analyze_news_impact(news, holding)
+            news_with_analysis = {**news, 'analysis': analysis}
+            results.append(news_with_analysis)
+        
+        return results
+    
+    def should_notify(self, analysis: Dict) -> bool:
+        """Determine if the news warrants a notification"""
+        impact_score = analysis.get('impact_score', 0)
+        urgency = analysis.get('urgency', 'Days')
+        
+        if impact_score >= settings.impact_threshold:
+            return True
+        
+        if urgency in ['Immediate', 'Hours'] and impact_score >= 4:
+            return True
+        
+        return False
