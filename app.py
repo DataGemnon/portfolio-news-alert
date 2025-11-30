@@ -66,7 +66,7 @@ init_db()
 def get_services():
     return {
         'fmp': FMPClient(),
-        'ai': AIAnalyzer(),
+        # 'ai': AIAnalyzer(),
         'monitor': PortfolioNewsMonitor()
     }
 
