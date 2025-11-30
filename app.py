@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Portfolio News Alert - Web Interface
+StockPulse - Portfolio News Alert
 Modern, Sporty Dashboard for Portfolio News Monitoring
+Version 2.1 - With Market Pulse & Enriched Portfolio Cards
 """
 
 import streamlit as st
@@ -10,6 +11,8 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 import plotly.express as px
 import plotly.graph_objects as go
+import requests
+import time
 
 from models.database import (
     init_db, get_db, User, UserHolding, NewsArticle, 
@@ -18,6 +21,7 @@ from models.database import (
 from services.fmp_client import FMPClient
 from services.ai_analyzer import AIAnalyzer
 from main import PortfolioNewsMonitor
+from config.settings import settings
 
 # Page Configuration
 st.set_page_config(
@@ -27,7 +31,89 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Modern Sporty CSS Theme
+# ===========================
+# CACHING FUNCTIONS
+# ===========================
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_market_indices():
+    """Fetch major market indices with caching"""
+    indices = {}
+    
+    # Major indices to track
+    index_symbols = {
+        '%5EGSPC': {'name': 'S&P 500', 'emoji': '📈'},
+        '%5EIXIC': {'name': 'NASDAQ', 'emoji': '💻'},
+        '%5EDJI': {'name': 'DOW', 'emoji': '🏭'},
+        '%5EVIX': {'name': 'VIX', 'emoji': '😰'}
+    }
+    
+    for symbol, info in index_symbols.items():
+        try:
+            url = f"https://financialmodelingprep.com/api/v3/quote/{symbol}"
+            params = {'apikey': settings.fmp_api_key}
+            response = requests.get(url, params=params, timeout=10)
+            data = response.json()
+            
+            if data and len(data) > 0:
+                quote = data[0]
+                indices[symbol] = {
+                    'name': info['name'],
+                    'emoji': info['emoji'],
+                    'price': quote.get('price', 0),
+                    'change': quote.get('change', 0),
+                    'change_percent': quote.get('changesPercentage', 0)
+                }
+        except Exception as e:
+            print(f"Error fetching {symbol}: {e}")
+            continue
+    
+    return indices
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_stock_quote_cached(symbol: str):
+    """Get stock quote with caching"""
+    try:
+        url = f"https://financialmodelingprep.com/api/v3/quote/{symbol}"
+        params = {'apikey': settings.fmp_api_key}
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        return data[0] if data and len(data) > 0 else {}
+    except:
+        return {}
+
+@st.cache_data(ttl=86400)  # Cache for 24 hours
+def get_company_profile_cached(symbol: str):
+    """Get company profile with caching (name, logo, sector)"""
+    try:
+        url = f"https://financialmodelingprep.com/api/v3/profile/{symbol}"
+        params = {'apikey': settings.fmp_api_key}
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        
+        if data and len(data) > 0:
+            return {
+                'name': data[0].get('companyName', symbol),
+                'logo': data[0].get('image', ''),
+                'sector': data[0].get('sector', 'N/A'),
+                'industry': data[0].get('industry', 'N/A'),
+                'exchange': data[0].get('exchangeShortName', 'N/A')
+            }
+    except Exception as e:
+        print(f"Error fetching profile for {symbol}: {e}")
+    
+    return {
+        'name': symbol,
+        'logo': '',
+        'sector': 'N/A',
+        'industry': 'N/A',
+        'exchange': 'N/A'
+    }
+
+# ===========================
+# STYLING
+# ===========================
+
 st.markdown("""
 <style>
     /* Import Google Fonts - Modern Athletic Typography */
@@ -39,6 +125,7 @@ st.markdown("""
         --primary-dark: #00A8CC;
         --secondary: #FF3366;
         --accent: #00FF88;
+        --warning: #FFB800;
         --bg-dark: #0A0E17;
         --bg-card: #131A2B;
         --bg-card-hover: #1A2438;
@@ -72,7 +159,112 @@ st.markdown("""
         font-weight: 500;
     }
     
-    /* Main Header */
+    /* ===========================
+       MARKET PULSE HEADER
+       =========================== */
+    .market-pulse-container {
+        background: linear-gradient(135deg, #0D1321 0%, #131A2B 100%);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 1rem 1.5rem;
+        margin-bottom: 1.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+    
+    .market-pulse-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+    }
+    
+    .pulse-dot {
+        width: 8px;
+        height: 8px;
+        background: var(--accent);
+        border-radius: 50%;
+        animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+        0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.7); }
+        50% { opacity: 0.8; box-shadow: 0 0 0 6px rgba(0, 255, 136, 0); }
+    }
+    
+    .market-indices {
+        display: flex;
+        gap: 2rem;
+        flex-wrap: wrap;
+    }
+    
+    .index-item {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        min-width: 120px;
+    }
+    
+    .index-name {
+        color: var(--text-secondary);
+        font-size: 0.75rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 2px;
+    }
+    
+    .index-value {
+        color: var(--text-primary);
+        font-size: 1.1rem;
+        font-weight: 700;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    
+    .index-change {
+        font-size: 0.85rem;
+        font-weight: 600;
+        font-family: 'JetBrains Mono', monospace;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    
+    .index-change.positive {
+        color: var(--accent);
+    }
+    
+    .index-change.negative {
+        color: var(--secondary);
+    }
+    
+    .market-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(0, 255, 136, 0.1);
+        padding: 8px 14px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--accent);
+    }
+    
+    .market-status.closed {
+        background: rgba(255, 51, 102, 0.1);
+        color: var(--secondary);
+    }
+    
+    /* ===========================
+       MAIN HEADER
+       =========================== */
     .main-header {
         background: var(--gradient-1);
         -webkit-background-clip: text;
@@ -124,34 +316,133 @@ st.markdown("""
         color: var(--primary);
     }
     
-    /* Navigation Styling */
-    .nav-item {
+    /* ===========================
+       ENRICHED PORTFOLIO CARDS
+       =========================== */
+    .stock-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        padding: 1.25rem;
+        margin: 0.5rem 0;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        cursor: pointer;
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .stock-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: var(--gradient-1);
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+    
+    .stock-card:hover {
+        border-color: var(--primary);
+        transform: translateY(-4px);
+        box-shadow: 0 20px 40px rgba(0, 212, 255, 0.15);
+    }
+    
+    .stock-card:hover::before {
+        opacity: 1;
+    }
+    
+    .stock-card-header {
         display: flex;
         align-items: center;
         gap: 12px;
-        padding: 14px 18px;
-        margin: 6px 0;
+        margin-bottom: 0.75rem;
+    }
+    
+    .stock-logo {
+        width: 44px;
+        height: 44px;
         border-radius: 12px;
-        cursor: pointer;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        color: var(--text-secondary);
-        font-weight: 500;
-        font-size: 0.95rem;
-    }
-    
-    .nav-item:hover {
         background: var(--bg-card-hover);
-        color: var(--text-primary);
-        transform: translateX(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        border: 1px solid var(--border-color);
     }
     
-    .nav-item.active {
-        background: linear-gradient(135deg, rgba(0, 212, 255, 0.15) 0%, rgba(0, 255, 136, 0.1) 100%);
+    .stock-logo img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        padding: 6px;
+    }
+    
+    .stock-logo-placeholder {
+        font-size: 1.2rem;
+        font-weight: 700;
         color: var(--primary);
-        border-left: 3px solid var(--primary);
+        font-family: 'JetBrains Mono', monospace;
     }
     
-    /* Stat Cards */
+    .stock-info {
+        flex: 1;
+    }
+    
+    .stock-symbol {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        font-family: 'JetBrains Mono', monospace;
+        letter-spacing: 0.5px;
+    }
+    
+    .stock-name {
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+        font-weight: 400;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 150px;
+    }
+    
+    .stock-badge {
+        background: rgba(0, 212, 255, 0.1);
+        color: var(--primary);
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .stock-meta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 0.5rem;
+    }
+    
+    .stock-sector {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        background: var(--bg-card-hover);
+        padding: 4px 10px;
+        border-radius: 12px;
+    }
+    
+    .stock-exchange {
+        font-size: 0.7rem;
+        color: var(--text-secondary);
+        font-family: 'JetBrains Mono', monospace;
+    }
+    
+    /* ===========================
+       STAT CARDS
+       =========================== */
     .stat-card {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
@@ -208,46 +499,9 @@ st.markdown("""
         color: var(--secondary);
     }
     
-    /* Stock Ticker Card */
-    .ticker-card {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
-        border-radius: 14px;
-        padding: 1.2rem 1.5rem;
-        margin: 0.5rem 0;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        transition: all 0.25s ease;
-        cursor: pointer;
-    }
-    
-    .ticker-card:hover {
-        background: var(--bg-card-hover);
-        border-color: var(--primary);
-        transform: scale(1.02);
-    }
-    
-    .ticker-symbol {
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        font-family: 'JetBrains Mono', monospace;
-        letter-spacing: 0.5px;
-    }
-    
-    .ticker-badge {
-        background: rgba(0, 212, 255, 0.1);
-        color: var(--primary);
-        padding: 6px 12px;
-        border-radius: 20px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    
-    /* Alert Cards */
+    /* ===========================
+       ALERT CARDS
+       =========================== */
     .alert-card {
         background: var(--bg-card);
         border: 1px solid var(--border-color);
@@ -316,8 +570,8 @@ st.markdown("""
     }
     
     .impact-medium {
-        background: rgba(255, 193, 7, 0.15);
-        color: #FFC107;
+        background: rgba(255, 184, 0, 0.15);
+        color: var(--warning);
     }
     
     .impact-low {
@@ -430,32 +684,6 @@ st.markdown("""
         margin: 2rem 0;
     }
     
-    /* Quick Stats Bar */
-    .quick-stats {
-        display: flex;
-        gap: 2rem;
-        padding: 1rem 0;
-        border-bottom: 1px solid var(--border-color);
-        margin-bottom: 1.5rem;
-    }
-    
-    .quick-stat-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    
-    .quick-stat-label {
-        color: var(--text-secondary);
-        font-size: 0.85rem;
-    }
-    
-    .quick-stat-value {
-        color: var(--text-primary);
-        font-weight: 600;
-        font-family: 'JetBrains Mono', monospace;
-    }
-    
     /* Sidebar User Card */
     .user-card {
         background: var(--bg-card);
@@ -486,35 +714,6 @@ st.markdown("""
         background: var(--accent);
         border-radius: 50%;
         animation: pulse 2s infinite;
-    }
-    
-    @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.5; }
-    }
-    
-    /* Scan Button Special */
-    .scan-btn {
-        background: linear-gradient(135deg, #FF3366 0%, #FF6B35 100%);
-        color: white;
-        border: none;
-        border-radius: 14px;
-        padding: 1rem 2rem;
-        font-weight: 700;
-        font-size: 1rem;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        width: 100%;
-        transition: all 0.3s ease;
-        box-shadow: 0 10px 30px rgba(255, 51, 102, 0.3);
-    }
-    
-    .scan-btn:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 15px 40px rgba(255, 51, 102, 0.4);
     }
     
     /* Empty State */
@@ -554,6 +753,14 @@ st.markdown("""
         font-weight: 700;
     }
     
+    /* Last Updated */
+    .last-updated {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        text-align: right;
+        margin-top: 0.5rem;
+    }
+    
     /* Plotly Chart Override */
     .js-plotly-plot {
         border-radius: 16px !important;
@@ -562,10 +769,108 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize database
+# ===========================
+# HELPER FUNCTIONS
+# ===========================
+
+def is_market_open():
+    """Check if US market is currently open (simplified)"""
+    now = datetime.utcnow()
+    # Convert to ET (UTC-5, simplified - doesn't account for DST)
+    et_hour = (now.hour - 5) % 24
+    
+    # Check if weekday
+    if now.weekday() >= 5:  # Saturday or Sunday
+        return False
+    
+    # Check if trading hours (9:30 AM - 4:00 PM ET)
+    if 9 <= et_hour < 16:
+        if et_hour == 9 and now.minute < 30:
+            return False
+        return True
+    
+    return False
+
+def render_market_pulse():
+    """Render the Market Pulse header with live indices"""
+    indices = get_market_indices()
+    market_open = is_market_open()
+    
+    # Build indices HTML
+    indices_html = ""
+    for symbol, data in indices.items():
+        change_class = "positive" if data['change_percent'] >= 0 else "negative"
+        arrow = "▲" if data['change_percent'] >= 0 else "▼"
+        
+        indices_html += f"""
+        <div class="index-item">
+            <div class="index-name">{data['emoji']} {data['name']}</div>
+            <div class="index-value">{data['price']:,.2f}</div>
+            <div class="index-change {change_class}">{arrow} {abs(data['change_percent']):.2f}%</div>
+        </div>
+        """
+    
+    market_status_class = "" if market_open else "closed"
+    market_status_text = "Market Open" if market_open else "Market Closed"
+    market_status_icon = "🟢" if market_open else "🔴"
+    
+    st.markdown(f"""
+    <div class="market-pulse-container">
+        <div class="market-pulse-title">
+            <div class="pulse-dot"></div>
+            Market Pulse
+        </div>
+        <div class="market-indices">
+            {indices_html}
+        </div>
+        <div class="market-status {market_status_class}">
+            {market_status_icon} {market_status_text}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def render_stock_card(symbol: str, profile: dict):
+    """Render an enriched stock card with logo and company info"""
+    logo_html = ""
+    if profile.get('logo'):
+        logo_html = f'<img src="{profile["logo"]}" alt="{symbol}" onerror="this.style.display=\'none\'">'
+    else:
+        logo_html = f'<span class="stock-logo-placeholder">{symbol[:2]}</span>'
+    
+    # Truncate company name if too long
+    company_name = profile.get('name', symbol)
+    if len(company_name) > 25:
+        company_name = company_name[:22] + "..."
+    
+    sector = profile.get('sector', 'N/A')
+    if sector and sector != 'N/A' and len(sector) > 15:
+        sector = sector[:12] + "..."
+    
+    return f"""
+    <div class="stock-card">
+        <div class="stock-card-header">
+            <div class="stock-logo">
+                {logo_html}
+            </div>
+            <div class="stock-info">
+                <div class="stock-symbol">{symbol}</div>
+                <div class="stock-name">{company_name}</div>
+            </div>
+            <div class="stock-badge">Tracking</div>
+        </div>
+        <div class="stock-meta">
+            <span class="stock-sector">{sector}</span>
+            <span class="stock-exchange">{profile.get('exchange', 'N/A')}</span>
+        </div>
+    </div>
+    """
+
+# ===========================
+# INITIALIZE
+# ===========================
+
 init_db()
 
-# Services
 @st.cache_resource
 def get_services():
     return {
@@ -576,11 +881,13 @@ def get_services():
 
 services = get_services()
 
-# Session state for user
 if 'user_email' not in st.session_state:
     st.session_state.user_email = 'demo@example.com'
 
-# Sidebar
+# ===========================
+# SIDEBAR
+# ===========================
+
 with st.sidebar:
     # Logo
     st.markdown("""
@@ -633,6 +940,9 @@ with st.sidebar:
 # PAGE 1: DASHBOARD
 # ===========================
 if page == "🏠 Dashboard":
+    # Market Pulse Header
+    render_market_pulse()
+    
     st.markdown('<p class="main-header">Dashboard</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Real-time insights for your portfolio</p>', unsafe_allow_html=True)
     
@@ -658,37 +968,36 @@ if page == "🏠 Dashboard":
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.markdown("""
+        st.markdown(f"""
         <div class="stat-card">
             <div class="stat-label">Tracked Stocks</div>
-            <div class="stat-value">{}</div>
+            <div class="stat-value">{len(holdings)}</div>
         </div>
-        """.format(len(holdings)), unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
     
     with col2:
-        st.markdown("""
+        st.markdown(f"""
         <div class="stat-card">
             <div class="stat-label">Weekly Alerts</div>
-            <div class="stat-value">{}</div>
+            <div class="stat-value">{len(recent_alerts)}</div>
         </div>
-        """.format(len(recent_alerts)), unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
     
     with col3:
-        st.markdown("""
+        st.markdown(f"""
         <div class="stat-card">
             <div class="stat-label">High Impact</div>
-            <div class="stat-value negative">{}</div>
+            <div class="stat-value negative">{high_impact_alerts}</div>
         </div>
-        """.format(high_impact_alerts), unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
     
     with col4:
-        status = "Active" if user.active else "Inactive"
-        st.markdown("""
+        st.markdown(f"""
         <div class="stat-card">
             <div class="stat-label">Status</div>
-            <div class="stat-value positive">{}</div>
+            <div class="stat-value positive">{"✓" if user.active else "✗"}</div>
         </div>
-        """.format("✓" if user.active else "✗"), unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
     
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
     
@@ -698,57 +1007,18 @@ if page == "🏠 Dashboard":
     with col1:
         st.markdown("""
         <div class="section-header">
-            <div class="section-icon">📈</div>
-            <div class="section-title">Portfolio Overview</div>
+            <div class="section-icon">💼</div>
+            <div class="section-title">Your Portfolio</div>
         </div>
         """, unsafe_allow_html=True)
         
         if holdings:
-            portfolio_data = []
-            for holding in holdings:
-                try:
-                    quote = services['fmp'].get_stock_quote(holding.symbol)
-                    current_price = quote.get('price', 0)
-                    value = current_price * float(holding.quantity)
-                    cost = float(holding.avg_cost) * float(holding.quantity)
-                    pnl = value - cost
-                    pnl_pct = (pnl / cost * 100) if cost > 0 else 0
-                    
-                    portfolio_data.append({
-                        'Symbol': holding.symbol,
-                        'Value': value,
-                        'P&L': pnl_pct
-                    })
-                except:
-                    pass
-            
-            if portfolio_data:
-                df = pd.DataFrame(portfolio_data)
-                
-                # Modern Pie Chart
-                fig = px.pie(
-                    df, 
-                    values='Value', 
-                    names='Symbol',
-                    color_discrete_sequence=['#00D4FF', '#00FF88', '#FF3366', '#6366F1', '#FF6B35', '#8B5CF6']
-                )
-                fig.update_layout(
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    font=dict(family="Outfit", color="#FFFFFF"),
-                    legend=dict(
-                        bgcolor='rgba(19,26,43,0.8)',
-                        bordercolor='#1E2A42',
-                        borderwidth=1
-                    ),
-                    margin=dict(t=20, b=20, l=20, r=20)
-                )
-                fig.update_traces(
-                    textfont_size=14,
-                    textfont_color='white',
-                    marker=dict(line=dict(color='#0A0E17', width=2))
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            # Display enriched stock cards
+            cols = st.columns(2)
+            for idx, holding in enumerate(holdings):
+                profile = get_company_profile_cached(holding.symbol)
+                with cols[idx % 2]:
+                    st.markdown(render_stock_card(holding.symbol, profile), unsafe_allow_html=True)
         else:
             st.markdown("""
             <div class="empty-state">
@@ -802,12 +1072,16 @@ if page == "🏠 Dashboard":
             </div>
             """, unsafe_allow_html=True)
     
+    st.markdown(f'<div class="last-updated">Last updated: {datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}</div>', unsafe_allow_html=True)
+    
     db.close()
 
 # ===========================
 # PAGE 2: PORTFOLIO
 # ===========================
 elif page == "📊 Portfolio":
+    render_market_pulse()
+    
     st.markdown('<p class="main-header">Portfolio</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Manage your tracked stocks</p>', unsafe_allow_html=True)
     
@@ -819,7 +1093,7 @@ elif page == "📊 Portfolio":
         db.close()
         st.stop()
     
-    # Current Holdings - Simple Ticker Cards
+    # Current Holdings - Enriched Cards
     st.markdown("""
     <div class="section-header">
         <div class="section-icon">💼</div>
@@ -830,16 +1104,12 @@ elif page == "📊 Portfolio":
     holdings = db.query(UserHolding).filter(UserHolding.user_id == user.id).all()
     
     if holdings:
-        # Grid of ticker cards
+        # Grid of enriched stock cards
         cols = st.columns(3)
         for idx, holding in enumerate(holdings):
+            profile = get_company_profile_cached(holding.symbol)
             with cols[idx % 3]:
-                st.markdown(f"""
-                <div class="ticker-card">
-                    <div class="ticker-symbol">{holding.symbol}</div>
-                    <div class="ticker-badge">Tracking</div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown(render_stock_card(holding.symbol, profile), unsafe_allow_html=True)
         
         st.markdown("<br>", unsafe_allow_html=True)
         
@@ -919,6 +1189,8 @@ elif page == "📊 Portfolio":
 # PAGE 3: ALERTS
 # ===========================
 elif page == "🔔 Alerts":
+    render_market_pulse()
+    
     st.markdown('<p class="main-header">Alerts</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Your news feed and notifications</p>', unsafe_allow_html=True)
     
@@ -1071,8 +1343,6 @@ elif page == "⚙️ Settings":
     st.info("💡 Advanced settings like impact threshold and polling frequency can be found in `config/settings.py`")
     
     with st.expander("View Current Configuration"):
-        from config.settings import settings
-        
         st.markdown(f"""
         | Setting | Value |
         |---------|-------|
@@ -1105,6 +1375,8 @@ elif page == "⚙️ Settings":
 # PAGE 5: RUN SCAN
 # ===========================
 elif page == "🚀 Run Scan":
+    render_market_pulse()
+    
     st.markdown('<p class="main-header">Run Scan</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Manually trigger a portfolio news scan</p>', unsafe_allow_html=True)
     
@@ -1162,6 +1434,6 @@ elif page == "🚀 Run Scan":
 # Footer
 st.markdown("""
 <div class="app-footer">
-    <span class="footer-brand">StockPulse</span> v2.0 | Powered by Claude AI & Financial APIs
+    <span class="footer-brand">StockPulse</span> v2.1 | Powered by Claude AI & Financial APIs
 </div>
 """, unsafe_allow_html=True)
