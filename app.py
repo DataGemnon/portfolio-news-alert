@@ -792,42 +792,56 @@ def is_market_open():
     return False
 
 def render_market_pulse():
-    """Render the Market Pulse header with live indices"""
+    """Render the Market Pulse header with live indices using Streamlit columns"""
     indices = get_market_indices()
     market_open = is_market_open()
     
-    # Build indices HTML
-    indices_html = ""
-    for symbol, data in indices.items():
-        change_class = "positive" if data['change_percent'] >= 0 else "negative"
-        arrow = "▲" if data['change_percent'] >= 0 else "▼"
-        
-        indices_html += f"""
-        <div class="index-item">
-            <div class="index-name">{data['emoji']} {data['name']}</div>
-            <div class="index-value">{data['price']:,.2f}</div>
-            <div class="index-change {change_class}">{arrow} {abs(data['change_percent']):.2f}%</div>
-        </div>
-        """
-    
-    market_status_class = "" if market_open else "closed"
-    market_status_text = "Market Open" if market_open else "Market Closed"
-    market_status_icon = "🟢" if market_open else "🔴"
-    
-    st.markdown(f"""
-    <div class="market-pulse-container">
-        <div class="market-pulse-title">
-            <div class="pulse-dot"></div>
-            Market Pulse
-        </div>
-        <div class="market-indices">
-            {indices_html}
-        </div>
-        <div class="market-status {market_status_class}">
-            {market_status_icon} {market_status_text}
+    # Create a container with custom styling
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #0D1321 0%, #131A2B 100%); 
+                border: 1px solid #1E2A42; 
+                border-radius: 16px; 
+                padding: 1rem 1.5rem; 
+                margin-bottom: 1.5rem;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 0.75rem;">
+            <div style="width: 8px; height: 8px; background: #00FF88; border-radius: 50%;"></div>
+            <span style="color: #8892A6; font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px;">Market Pulse</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
+    
+    # Use Streamlit columns for indices
+    cols = st.columns(len(indices) + 1)
+    
+    for idx, (symbol, data) in enumerate(indices.items()):
+        with cols[idx]:
+            change_color = "#00FF88" if data['change_percent'] >= 0 else "#FF3366"
+            arrow = "▲" if data['change_percent'] >= 0 else "▼"
+            
+            st.markdown(f"""
+            <div style="text-align: center; padding: 0.5rem;">
+                <div style="color: #8892A6; font-size: 0.75rem; font-weight: 500; text-transform: uppercase;">{data['emoji']} {data['name']}</div>
+                <div style="color: #FFFFFF; font-size: 1.2rem; font-weight: 700; font-family: 'JetBrains Mono', monospace;">{data['price']:,.2f}</div>
+                <div style="color: {change_color}; font-size: 0.85rem; font-weight: 600;">{arrow} {abs(data['change_percent']):.2f}%</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # Market status in the last column
+    with cols[-1]:
+        status_color = "#00FF88" if market_open else "#FF3366"
+        status_bg = "rgba(0, 255, 136, 0.1)" if market_open else "rgba(255, 51, 102, 0.1)"
+        status_text = "Market Open" if market_open else "Market Closed"
+        status_icon = "🟢" if market_open else "🔴"
+        
+        st.markdown(f"""
+        <div style="display: flex; align-items: center; justify-content: center; height: 100%;">
+            <div style="background: {status_bg}; padding: 8px 14px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; color: {status_color};">
+                {status_icon} {status_text}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
 def render_stock_card(symbol: str, profile: dict):
     """Render an enriched stock card with logo and company info"""
