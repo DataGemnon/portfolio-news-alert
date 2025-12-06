@@ -23,6 +23,47 @@ from services.ai_analyzer import AIAnalyzer
 from main import PortfolioNewsMonitor
 from config.settings import settings
 
+# ===========================
+# AUTO-CREATE DEMO USER (for cloud deployment)
+# ===========================
+def ensure_demo_user():
+    """Create demo user and portfolio if they don't exist"""
+    try:
+        db = next(get_db())
+        user = db.query(User).filter(User.email == "demo@example.com").first()
+        
+        if not user:
+            # Create demo user
+            user = User(
+                email="demo@example.com",
+                name="Demo User",
+                active=True
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            
+            # Add some default stocks
+            default_stocks = ["AAPL", "MSFT", "GOOGL", "TSLA", "NVDA"]
+            for symbol in default_stocks:
+                holding = UserHolding(
+                    user_id=user.id,
+                    symbol=symbol,
+                    quantity=0,
+                    average_cost=0,
+                    asset_type="stock"
+                )
+                db.add(holding)
+            db.commit()
+            print("✅ Demo user created with default portfolio")
+        
+        db.close()
+    except Exception as e:
+        print(f"Error creating demo user: {e}")
+
+# Run on startup
+ensure_demo_user()
+
 # Page Configuration
 st.set_page_config(
     page_title="StockPulse | Portfolio Intelligence",
