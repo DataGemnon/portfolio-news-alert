@@ -1,37 +1,22 @@
-# Fichiers secrets (DO NOT UPLOAD)
-.env
-*.env
-
-# Local database
-*.db
-portfolio_news.db
-
-# Cache Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-
-# Cache Redis
-dump.rdb
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-.streamlit/secrets.toml
-.streamlit/secrets.toml 
-.streamlit/ 
-.streamlit/secrets.toml 
-.streamlit/ 
+# Secrets (DO NOT UPLOAD) 
 .env 
+.streamlit/ 
+ 
+# Database 
+*.db 
+ 
+# Python cache 
+__pycache__/ 
+*.pyc 
+ 
+# IDE 
+.vscode/ 
+.idea/ 
+ 
+# OS 
+.DS_Store 
+Thumbs.db 
+ 
+# Temp files 
+~$*.docx 
+*.log 
