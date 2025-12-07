@@ -890,22 +890,67 @@ def render_stock_card(symbol: str, profile: dict):
     """Render an enriched stock card with logo and company info"""
     logo_url = profile.get('logo', '')
     
-    # Handle logo - use simpler approach without complex JS
+    # Try multiple logo sources
     if logo_url and logo_url.startswith('http'):
-        logo_html = f'<img src="{logo_url}" alt="{symbol}" style="width:100%;height:100%;object-fit:contain;padding:6px;" onerror="this.style.display=\'none\'">'
-        # Add placeholder behind the image as fallback
-        logo_content = f'{logo_html}<span class="stock-logo-placeholder" style="position:absolute;">{symbol[:2]}</span>'
+        # Use the FMP logo if available
+        logo_img = f'<img src="{logo_url}" alt="{symbol}" style="width:32px;height:32px;object-fit:contain;border-radius:6px;">'
     else:
-        logo_content = f'<span class="stock-logo-placeholder">{symbol[:2]}</span>'
+        # Fallback to clearbit logo API (free, reliable)
+        company_domain = {
+            'AAPL': 'apple.com',
+            'MSFT': 'microsoft.com',
+            'GOOGL': 'google.com',
+            'GOOG': 'google.com',
+            'TSLA': 'tesla.com',
+            'NVDA': 'nvidia.com',
+            'META': 'meta.com',
+            'AMZN': 'amazon.com',
+            'NFLX': 'netflix.com',
+            'AMD': 'amd.com',
+            'INTC': 'intel.com',
+            'CRM': 'salesforce.com',
+            'ORCL': 'oracle.com',
+            'CSCO': 'cisco.com',
+            'ADBE': 'adobe.com',
+            'IBM': 'ibm.com',
+            'QCOM': 'qualcomm.com',
+            'TXN': 'ti.com',
+            'AVGO': 'broadcom.com',
+            'MU': 'micron.com'
+        }.get(symbol, '')
+        
+        if company_domain:
+            logo_img = f'<img src="https://logo.clearbit.com/{company_domain}" alt="{symbol}" style="width:32px;height:32px;object-fit:contain;border-radius:6px;" onerror="this.style.display=\'none\'">'
+        else:
+            logo_img = ''
     
-    # Truncate company name if too long
-    company_name = profile.get('name', symbol)
-    if not company_name or company_name == 'N/A':
-        company_name = symbol
-    elif len(company_name) > 25:
-        company_name = company_name[:22] + "..."
+    # Fallback placeholder (always shown behind image)
+    placeholder = f'<div style="width:44px;height:44px;background:#1A2438;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1rem;font-weight:700;color:#00D4FF;font-family:monospace;">{symbol[:2]}</div>'
     
-    # Handle sector - show something nicer than N/A
+    # Company name - make it prominent
+    company_name = profile.get('name', '')
+    if not company_name or company_name == symbol or company_name == 'N/A':
+        # Use known company names as fallback
+        known_names = {
+            'AAPL': 'Apple Inc.',
+            'MSFT': 'Microsoft Corporation',
+            'GOOGL': 'Alphabet Inc.',
+            'GOOG': 'Alphabet Inc.',
+            'TSLA': 'Tesla Inc.',
+            'NVDA': 'NVIDIA Corporation',
+            'META': 'Meta Platforms Inc.',
+            'AMZN': 'Amazon.com Inc.',
+            'NFLX': 'Netflix Inc.',
+            'AMD': 'AMD Inc.',
+            'INTC': 'Intel Corporation',
+            'MU': 'Micron Technology'
+        }
+        company_name = known_names.get(symbol, symbol)
+    
+    # Truncate if too long
+    display_name = company_name[:28] + "..." if len(company_name) > 30 else company_name
+    
+    # Handle sector
     sector = profile.get('sector', '')
     if not sector or sector == 'N/A':
         sector = 'Stock'
@@ -914,25 +959,30 @@ def render_stock_card(symbol: str, profile: dict):
     
     # Handle exchange
     exchange = profile.get('exchange', '')
-    if not exchange or exchange == 'N/A':
-        exchange = ''
+    exchange_html = f'<span style="font-size:0.7rem;color:#8892A6;font-family:monospace;">{exchange}</span>' if exchange and exchange != 'N/A' else ''
     
-    exchange_html = f'<span class="stock-exchange">{exchange}</span>' if exchange else ''
+    # Build the logo container
+    if logo_img:
+        logo_container = f'''
+        <div style="width:44px;height:44px;background:#1A2438;border-radius:12px;display:flex;align-items:center;justify-content:center;border:1px solid #1E2A42;overflow:hidden;">
+            {logo_img}
+        </div>
+        '''
+    else:
+        logo_container = placeholder
     
     return f"""
-    <div class="stock-card">
-        <div class="stock-card-header">
-            <div class="stock-logo" style="position:relative;">
-                {logo_content}
+    <div style="background:#131A2B;border:1px solid #1E2A42;border-radius:16px;padding:1rem;margin-bottom:0.75rem;transition:all 0.3s ease;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:0.5rem;">
+            {logo_container}
+            <div style="flex:1;min-width:0;">
+                <div style="font-size:1.1rem;font-weight:700;color:#FFFFFF;font-family:monospace;">{symbol}</div>
+                <div style="font-size:0.8rem;color:#8892A6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{display_name}</div>
             </div>
-            <div class="stock-info">
-                <div class="stock-symbol">{symbol}</div>
-                <div class="stock-name">{company_name}</div>
-            </div>
-            <div class="stock-badge">Tracking</div>
+            <div style="background:rgba(0,212,255,0.1);color:#00D4FF;padding:6px 12px;border-radius:20px;font-size:0.7rem;font-weight:600;">Tracking</div>
         </div>
-        <div class="stock-meta">
-            <span class="stock-sector">{sector}</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:0.75rem;color:#8892A6;background:#1A2438;padding:4px 10px;border-radius:12px;">{sector}</span>
             {exchange_html}
         </div>
     </div>
