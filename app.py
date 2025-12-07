@@ -890,11 +890,13 @@ def render_stock_card(symbol: str, profile: dict):
     """Render an enriched stock card with logo and company info"""
     logo_url = profile.get('logo', '')
     
-    # Handle logo - use a reliable fallback
+    # Handle logo - use simpler approach without complex JS
     if logo_url and logo_url.startswith('http'):
-        logo_html = f'<img src="{logo_url}" alt="{symbol}" onerror="this.parentElement.innerHTML=\'<span class=stock-logo-placeholder>{symbol[:2]}</span>\'">'
+        logo_html = f'<img src="{logo_url}" alt="{symbol}" style="width:100%;height:100%;object-fit:contain;padding:6px;" onerror="this.style.display=\'none\'">'
+        # Add placeholder behind the image as fallback
+        logo_content = f'{logo_html}<span class="stock-logo-placeholder" style="position:absolute;">{symbol[:2]}</span>'
     else:
-        logo_html = f'<span class="stock-logo-placeholder">{symbol[:2]}</span>'
+        logo_content = f'<span class="stock-logo-placeholder">{symbol[:2]}</span>'
     
     # Truncate company name if too long
     company_name = profile.get('name', symbol)
@@ -920,8 +922,8 @@ def render_stock_card(symbol: str, profile: dict):
     return f"""
     <div class="stock-card">
         <div class="stock-card-header">
-            <div class="stock-logo">
-                {logo_html}
+            <div class="stock-logo" style="position:relative;">
+                {logo_content}
             </div>
             <div class="stock-info">
                 <div class="stock-symbol">{symbol}</div>
