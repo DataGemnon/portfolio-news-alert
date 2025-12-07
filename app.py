@@ -132,23 +132,25 @@ def get_company_profile_cached(symbol: str):
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
         
-        if data and len(data) > 0:
+        if data and len(data) > 0 and isinstance(data, list):
+            company = data[0]
             return {
-                'name': data[0].get('companyName', symbol),
-                'logo': data[0].get('image', ''),
-                'sector': data[0].get('sector', 'N/A'),
-                'industry': data[0].get('industry', 'N/A'),
-                'exchange': data[0].get('exchangeShortName', 'N/A')
+                'name': company.get('companyName') or symbol,
+                'logo': company.get('image') or '',
+                'sector': company.get('sector') or '',
+                'industry': company.get('industry') or '',
+                'exchange': company.get('exchangeShortName') or ''
             }
     except Exception as e:
         print(f"Error fetching profile for {symbol}: {e}")
     
+    # Return defaults with symbol as name
     return {
         'name': symbol,
         'logo': '',
-        'sector': 'N/A',
-        'industry': 'N/A',
-        'exchange': 'N/A'
+        'sector': '',
+        'industry': '',
+        'exchange': ''
     }
 
 # ===========================
@@ -886,20 +888,34 @@ def render_market_pulse():
 
 def render_stock_card(symbol: str, profile: dict):
     """Render an enriched stock card with logo and company info"""
-    logo_html = ""
-    if profile.get('logo'):
-        logo_html = f'<img src="{profile["logo"]}" alt="{symbol}" onerror="this.style.display=\'none\'">'
+    logo_url = profile.get('logo', '')
+    
+    # Handle logo - use a reliable fallback
+    if logo_url and logo_url.startswith('http'):
+        logo_html = f'<img src="{logo_url}" alt="{symbol}" onerror="this.parentElement.innerHTML=\'<span class=stock-logo-placeholder>{symbol[:2]}</span>\'">'
     else:
         logo_html = f'<span class="stock-logo-placeholder">{symbol[:2]}</span>'
     
     # Truncate company name if too long
     company_name = profile.get('name', symbol)
-    if len(company_name) > 25:
+    if not company_name or company_name == 'N/A':
+        company_name = symbol
+    elif len(company_name) > 25:
         company_name = company_name[:22] + "..."
     
-    sector = profile.get('sector', 'N/A')
-    if sector and sector != 'N/A' and len(sector) > 15:
+    # Handle sector - show something nicer than N/A
+    sector = profile.get('sector', '')
+    if not sector or sector == 'N/A':
+        sector = 'Stock'
+    elif len(sector) > 15:
         sector = sector[:12] + "..."
+    
+    # Handle exchange
+    exchange = profile.get('exchange', '')
+    if not exchange or exchange == 'N/A':
+        exchange = ''
+    
+    exchange_html = f'<span class="stock-exchange">{exchange}</span>' if exchange else ''
     
     return f"""
     <div class="stock-card">
@@ -915,7 +931,7 @@ def render_stock_card(symbol: str, profile: dict):
         </div>
         <div class="stock-meta">
             <span class="stock-sector">{sector}</span>
-            <span class="stock-exchange">{profile.get('exchange', 'N/A')}</span>
+            {exchange_html}
         </div>
     </div>
     """
