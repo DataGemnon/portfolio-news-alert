@@ -901,29 +901,100 @@ def render_stock_card(symbol: str, profile: dict):
             'META': 'Meta Platforms Inc.',
             'AMZN': 'Amazon.com Inc.',
             'NFLX': 'Netflix Inc.',
-            'AMD': 'AMD Inc.',
+            'AMD': 'Advanced Micro Devices',
             'INTC': 'Intel Corporation',
-            'MU': 'Micron Technology'
+            'MU': 'Micron Technology',
+            'JPM': 'JPMorgan Chase',
+            'V': 'Visa Inc.',
+            'JNJ': 'Johnson & Johnson',
+            'WMT': 'Walmart Inc.',
+            'PG': 'Procter & Gamble',
+            'DIS': 'Walt Disney Co.',
+            'PYPL': 'PayPal Holdings',
+            'ADBE': 'Adobe Inc.',
+            'CRM': 'Salesforce Inc.',
+            'NFLX': 'Netflix Inc.',
+            'COST': 'Costco Wholesale',
+            'PEP': 'PepsiCo Inc.',
+            'KO': 'Coca-Cola Co.'
         }
         company_name = known_names.get(symbol, symbol)
     
     # Truncate if needed
-    if len(company_name) > 25:
-        company_name = company_name[:22] + "..."
+    if len(company_name) > 30:
+        company_name = company_name[:27] + "..."
     
-    # Sector with fallback
-    sector = profile.get('sector', '') or 'Stock'
-    if sector == 'N/A':
-        sector = 'Stock'
+    # Sector with fallback and emoji
+    sector = profile.get('sector', '') or ''
+    if sector == 'N/A' or not sector:
+        sector = 'Equity'
     
-    return symbol, company_name, sector
+    sector_emoji = {
+        'Technology': '💻',
+        'Healthcare': '🏥',
+        'Financial Services': '🏦',
+        'Consumer Cyclical': '🛒',
+        'Consumer Defensive': '🛡️',
+        'Communication Services': '📡',
+        'Industrials': '🏭',
+        'Energy': '⚡',
+        'Utilities': '💡',
+        'Real Estate': '🏠',
+        'Basic Materials': '🧱',
+        'Equity': '📈'
+    }.get(sector, '📊')
+    
+    return symbol, company_name, sector, sector_emoji
 
 
-def display_stock_card_streamlit(symbol: str, company_name: str, sector: str):
-    """Display a stock card using Streamlit native components"""
-    with st.container():
-        st.markdown(f"**{symbol}** · {company_name}")
-        st.caption(f"📊 {sector} · Tracking")
+def display_stock_card_beautiful(symbol: str, company_name: str, sector: str, sector_emoji: str):
+    """Display a beautiful stock card"""
+    # Get a gradient color based on the symbol
+    colors = ['#00D4FF', '#00FF88', '#FF3366', '#FFB800', '#8B5CF6', '#F472B6']
+    color = colors[hash(symbol) % len(colors)]
+    
+    st.markdown(f"""
+    <div style="
+        background: linear-gradient(135deg, rgba(19, 26, 43, 0.9) 0%, rgba(26, 36, 56, 0.9) 100%);
+        border: 1px solid #1E2A42;
+        border-left: 4px solid {color};
+        border-radius: 12px;
+        padding: 1rem 1.25rem;
+        margin-bottom: 0.75rem;
+    ">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+                <div style="font-size: 1.3rem; font-weight: 700; color: #FFFFFF; font-family: 'JetBrains Mono', monospace; letter-spacing: 1px;">
+                    {symbol}
+                </div>
+                <div style="font-size: 0.85rem; color: #8892A6; margin-top: 4px;">
+                    {company_name}
+                </div>
+            </div>
+            <div style="
+                background: rgba(0, 212, 255, 0.1);
+                color: #00D4FF;
+                padding: 4px 10px;
+                border-radius: 20px;
+                font-size: 0.7rem;
+                font-weight: 600;
+            ">
+                ● TRACKING
+            </div>
+        </div>
+        <div style="margin-top: 0.75rem; display: flex; gap: 8px;">
+            <span style="
+                background: rgba(255, 255, 255, 0.05);
+                color: #8892A6;
+                padding: 4px 12px;
+                border-radius: 20px;
+                font-size: 0.75rem;
+            ">
+                {sector_emoji} {sector}
+            </span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 # ===========================
 # INITIALIZE
@@ -1029,37 +1100,67 @@ if page == "🏠 Dashboard":
     
     with col1:
         st.markdown(f"""
-        <div class="stat-card">
-            <div class="stat-label">Tracked Stocks</div>
-            <div class="stat-value">{len(holdings)}</div>
+        <div style="
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(0, 255, 136, 0.05) 100%);
+            border: 1px solid rgba(0, 212, 255, 0.2);
+            border-radius: 16px;
+            padding: 1.5rem;
+            text-align: center;
+        ">
+            <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">📊</div>
+            <div style="font-size: 2rem; font-weight: 800; color: #00D4FF; font-family: 'JetBrains Mono', monospace;">{len(holdings)}</div>
+            <div style="font-size: 0.85rem; color: #8892A6; text-transform: uppercase; letter-spacing: 1px;">Tracked</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
         st.markdown(f"""
-        <div class="stat-card">
-            <div class="stat-label">Weekly Alerts</div>
-            <div class="stat-value">{len(recent_alerts)}</div>
+        <div style="
+            background: linear-gradient(135deg, rgba(255, 184, 0, 0.1) 0%, rgba(255, 107, 53, 0.05) 100%);
+            border: 1px solid rgba(255, 184, 0, 0.2);
+            border-radius: 16px;
+            padding: 1.5rem;
+            text-align: center;
+        ">
+            <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">🔔</div>
+            <div style="font-size: 2rem; font-weight: 800; color: #FFB800; font-family: 'JetBrains Mono', monospace;">{len(recent_alerts)}</div>
+            <div style="font-size: 0.85rem; color: #8892A6; text-transform: uppercase; letter-spacing: 1px;">Alerts</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col3:
         st.markdown(f"""
-        <div class="stat-card">
-            <div class="stat-label">High Impact</div>
-            <div class="stat-value negative">{high_impact_alerts}</div>
+        <div style="
+            background: linear-gradient(135deg, rgba(255, 51, 102, 0.1) 0%, rgba(255, 107, 53, 0.05) 100%);
+            border: 1px solid rgba(255, 51, 102, 0.2);
+            border-radius: 16px;
+            padding: 1.5rem;
+            text-align: center;
+        ">
+            <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">⚠️</div>
+            <div style="font-size: 2rem; font-weight: 800; color: #FF3366; font-family: 'JetBrains Mono', monospace;">{high_impact_alerts}</div>
+            <div style="font-size: 0.85rem; color: #8892A6; text-transform: uppercase; letter-spacing: 1px;">High Impact</div>
         </div>
         """, unsafe_allow_html=True)
     
     with col4:
+        status_color = "#00FF88" if user.active else "#FF3366"
+        status_icon = "✓" if user.active else "✗"
         st.markdown(f"""
-        <div class="stat-card">
-            <div class="stat-label">Status</div>
-            <div class="stat-value positive">{"✓" if user.active else "✗"}</div>
+        <div style="
+            background: linear-gradient(135deg, rgba(0, 255, 136, 0.1) 0%, rgba(0, 212, 255, 0.05) 100%);
+            border: 1px solid rgba(0, 255, 136, 0.2);
+            border-radius: 16px;
+            padding: 1.5rem;
+            text-align: center;
+        ">
+            <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">⚡</div>
+            <div style="font-size: 2rem; font-weight: 800; color: {status_color}; font-family: 'JetBrains Mono', monospace;">{status_icon}</div>
+            <div style="font-size: 0.85rem; color: #8892A6; text-transform: uppercase; letter-spacing: 1px;">Active</div>
         </div>
         """, unsafe_allow_html=True)
     
-    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div style="margin: 2rem 0;"></div>', unsafe_allow_html=True)
     
     # Two Column Layout
     col1, col2 = st.columns([2, 1])
@@ -1073,15 +1174,13 @@ if page == "🏠 Dashboard":
         """, unsafe_allow_html=True)
         
         if holdings:
-            # Display stock cards using Streamlit native components
+            # Display beautiful stock cards
             cols = st.columns(2)
             for idx, holding in enumerate(holdings):
                 profile = get_company_profile_cached(holding.symbol)
-                symbol, company_name, sector = render_stock_card(holding.symbol, profile)
+                symbol, company_name, sector, sector_emoji = render_stock_card(holding.symbol, profile)
                 with cols[idx % 2]:
-                    with st.container(border=True):
-                        st.markdown(f"**{symbol}** · {company_name}")
-                        st.caption(f"📊 {sector}")
+                    display_stock_card_beautiful(symbol, company_name, sector, sector_emoji)
         else:
             st.info("📊 No stocks in your portfolio yet. Head to Portfolio to add some!")
     
@@ -1162,16 +1261,13 @@ elif page == "📊 Portfolio":
     holdings = db.query(UserHolding).filter(UserHolding.user_id == user.id).all()
     
     if holdings:
-        # Grid of stock cards using Streamlit native components
+        # Grid of beautiful stock cards
         cols = st.columns(3)
         for idx, holding in enumerate(holdings):
             profile = get_company_profile_cached(holding.symbol)
-            symbol, company_name, sector = render_stock_card(holding.symbol, profile)
+            symbol, company_name, sector, sector_emoji = render_stock_card(holding.symbol, profile)
             with cols[idx % 3]:
-                with st.container(border=True):
-                    st.markdown(f"**{symbol}**")
-                    st.caption(f"{company_name}")
-                    st.caption(f"📊 {sector}")
+                display_stock_card_beautiful(symbol, company_name, sector, sector_emoji)
         
         st.divider()
         
