@@ -267,10 +267,31 @@ st.markdown("""
         font-family: 'Outfit', sans-serif;
     }
     
-    /* Hide Streamlit Branding */
+    /* Hide Streamlit Branding - BUT keep sidebar toggle visible */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
+    
+    /* Keep the sidebar collapse/expand button always visible */
+    [data-testid="collapsedControl"] {
+        display: flex !important;
+        visibility: visible !important;
+        color: var(--primary) !important;
+        background: var(--bg-card) !important;
+        border: 1px solid var(--border-color) !important;
+        border-radius: 8px !important;
+    }
+    
+    /* Style the sidebar toggle button */
+    button[kind="header"] {
+        visibility: visible !important;
+    }
+    
+    /* Ensure sidebar expand button is always clickable */
+    [data-testid="stSidebarCollapsedControl"] {
+        display: block !important;
+        visibility: visible !important;
+        z-index: 999999 !important;
+    }
     
     /* Sidebar Styling */
     [data-testid="stSidebar"] {
