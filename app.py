@@ -154,15 +154,14 @@ def get_company_profile_cached(symbol: str):
     }
 
 
-@st.cache_data(ttl=600)  # Cache for 10 minutes only - need fresh data!
-def get_broker_rating_alerts(portfolio_symbols: list):
+def get_broker_rating_alerts_impl(portfolio_symbols: list, debug: bool = False):
     """
     Fetch broker rating changes (upgrades AND downgrades) for portfolio stocks
     
     Uses MULTIPLE sources to ensure we never miss important alerts:
-    1. FMP API (upgrades-downgrades endpoint)
+    1. FMP API (upgrades-downgrades endpoint) 
     2. FMP Stock News (scan headlines for upgrade/downgrade keywords)
-    3. General News API (backup scan)
+    3. FMP Analyst Stock Recommendations (another endpoint)
     
     This ensures that even if one source is delayed, we catch alerts from another.
     """
@@ -173,6 +172,10 @@ def get_broker_rating_alerts(portfolio_symbols: list):
     seen_alerts = set()  # Prevent duplicates
     cutoff_hours = 72  # Look back 3 days
     cutoff_time = datetime.utcnow() - timedelta(hours=cutoff_hours)
+    
+    if debug:
+        print(f"[DEBUG] Checking symbols: {portfolio_symbols}")
+        print(f"[DEBUG] Cutoff time: {cutoff_time}")
     
     # Premium brokers (their ratings carry more weight)
     premium_brokers = [
@@ -186,12 +189,16 @@ def get_broker_rating_alerts(portfolio_symbols: list):
     
     # Keywords to detect upgrades/downgrades in news headlines
     upgrade_keywords = ['upgrade', 'upgraded', 'upgrades', 'raises to buy', 
-                        'raises to outperform', 'raises to overweight', 'bullish']
+                        'raises to outperform', 'raises to overweight', 'bullish',
+                        'lifts to buy', 'lifts to outperform', 'boosts']
     downgrade_keywords = ['downgrade', 'downgraded', 'downgrades', 'cuts to sell',
                           'cuts to underperform', 'cuts to underweight', 'cuts to neutral',
-                          'cuts to equal-weight', 'bearish']
+                          'cuts to equal-weight', 'cuts to hold', 'bearish', 'lowers to']
     
     for symbol in portfolio_symbols:
+        if debug:
+            print(f"[DEBUG] Processing {symbol}...")
+        
         # =====================================================
         # SOURCE 1: FMP Upgrades/Downgrades API (primary source)
         # =====================================================
@@ -201,8 +208,11 @@ def get_broker_rating_alerts(portfolio_symbols: list):
             response = requests.get(url, params=params, timeout=10)
             data = response.json()
             
+            if debug:
+                print(f"[DEBUG] FMP Upgrades API returned {len(data) if isinstance(data, list) else type(data)} for {symbol}")
+            
             if isinstance(data, list):
-                for rating in data[:15]:  # Check more ratings
+                for rating in data[:15]:
                     try:
                         pub_date_str = rating.get('publishedDate', '')
                         pub_date = datetime.strptime(pub_date_str, '%Y-%m-%d %H:%M:%S')
@@ -211,13 +221,11 @@ def get_broker_rating_alerts(portfolio_symbols: list):
                             broker = rating.get('analystCompany', 'Unknown')
                             action = rating.get('action', '').lower()
                             
-                            # Create unique key to prevent duplicates
                             alert_key = f"{symbol}_{broker}_{pub_date.strftime('%Y%m%d')}"
                             if alert_key in seen_alerts:
                                 continue
                             seen_alerts.add(alert_key)
                             
-                            # Determine action type
                             if 'upgrade' in action:
                                 action_type = 'upgrade'
                             elif 'downgrade' in action:
@@ -242,19 +250,99 @@ def get_broker_rating_alerts(portfolio_symbols: list):
                                 'source': 'FMP API'
                             }
                             all_alerts.append(alert)
-                    except Exception:
+                            if debug:
+                                print(f"[DEBUG] ✅ Found from API: {broker} {action_type} {symbol}")
+                    except Exception as e:
+                        if debug:
+                            print(f"[DEBUG] Error parsing rating: {e}")
                         continue
         except Exception as e:
-            print(f"FMP upgrades API error for {symbol}: {e}")
+            if debug:
+                print(f"[DEBUG] FMP upgrades API error for {symbol}: {e}")
         
         # =====================================================
-        # SOURCE 2: FMP Stock News (scan headlines for broker actions)
+        # SOURCE 2: FMP Grade endpoint (different API)
+        # =====================================================
+        try:
+            url = f"https://financialmodelingprep.com/api/v3/grade/{symbol}"
+            params = {'apikey': settings.fmp_api_key}
+            response = requests.get(url, params=params, timeout=10)
+            grade_data = response.json()
+            
+            if debug:
+                print(f"[DEBUG] FMP Grade API returned {len(grade_data) if isinstance(grade_data, list) else type(grade_data)} for {symbol}")
+            
+            if isinstance(grade_data, list):
+                for grade in grade_data[:15]:
+                    try:
+                        pub_date_str = grade.get('date', '')
+                        # Grade API uses different date format
+                        try:
+                            pub_date = datetime.strptime(pub_date_str, '%Y-%m-%d')
+                        except:
+                            pub_date = datetime.strptime(pub_date_str, '%Y-%m-%d %H:%M:%S')
+                        
+                        if pub_date >= cutoff_time.replace(hour=0, minute=0, second=0):
+                            broker = grade.get('gradingCompany', 'Unknown')
+                            new_grade = grade.get('newGrade', 'N/A')
+                            prev_grade = grade.get('previousGrade', 'N/A')
+                            
+                            alert_key = f"{symbol}_{broker}_{pub_date.strftime('%Y%m%d')}"
+                            if alert_key in seen_alerts:
+                                continue
+                            seen_alerts.add(alert_key)
+                            
+                            # Determine action from grades
+                            bullish = ['buy', 'outperform', 'overweight', 'strong buy', 'positive']
+                            bearish = ['sell', 'underperform', 'underweight', 'negative', 'reduce']
+                            neutral = ['hold', 'neutral', 'equal-weight', 'market perform']
+                            
+                            new_score = 2 if any(b in new_grade.lower() for b in bullish) else (0 if any(b in new_grade.lower() for b in bearish) else 1)
+                            prev_score = 2 if any(b in prev_grade.lower() for b in bullish) else (0 if any(b in prev_grade.lower() for b in bearish) else 1)
+                            
+                            if new_score > prev_score:
+                                action_type = 'upgrade'
+                            elif new_score < prev_score:
+                                action_type = 'downgrade'
+                            else:
+                                action_type = 'reiterated'
+                            
+                            is_premium = any(pb.lower() in broker.lower() for pb in premium_brokers)
+                            
+                            alert = {
+                                'symbol': symbol,
+                                'broker': broker,
+                                'action_type': action_type,
+                                'new_rating': new_grade,
+                                'previous_rating': prev_grade,
+                                'date': pub_date.strftime('%Y-%m-%d'),
+                                'timestamp': pub_date,
+                                'is_premium_broker': is_premium,
+                                'score': (14 if is_premium else 7) + (5 if action_type == 'downgrade' else 0),
+                                'source': 'Grade API'
+                            }
+                            all_alerts.append(alert)
+                            if debug:
+                                print(f"[DEBUG] ✅ Found from Grade API: {broker} {action_type} {symbol}")
+                    except Exception as e:
+                        if debug:
+                            print(f"[DEBUG] Error parsing grade: {e}")
+                        continue
+        except Exception as e:
+            if debug:
+                print(f"[DEBUG] FMP grade API error for {symbol}: {e}")
+        
+        # =====================================================
+        # SOURCE 3: FMP Stock News (scan headlines for broker actions)
         # =====================================================
         try:
             url = f"https://financialmodelingprep.com/api/v3/stock_news"
-            params = {'tickers': symbol, 'limit': 30, 'apikey': settings.fmp_api_key}
+            params = {'tickers': symbol, 'limit': 50, 'apikey': settings.fmp_api_key}
             response = requests.get(url, params=params, timeout=10)
             news_data = response.json()
+            
+            if debug:
+                print(f"[DEBUG] FMP News returned {len(news_data) if isinstance(news_data, list) else type(news_data)} articles for {symbol}")
             
             if isinstance(news_data, list):
                 for article in news_data:
@@ -270,6 +358,9 @@ def get_broker_rating_alerts(portfolio_symbols: list):
                         if not (is_upgrade or is_downgrade):
                             continue
                         
+                        if debug:
+                            print(f"[DEBUG] Found news match: {article.get('title', '')[:60]}...")
+                        
                         pub_date = datetime.strptime(pub_date_str, '%Y-%m-%d %H:%M:%S')
                         if pub_date < cutoff_time:
                             continue
@@ -282,7 +373,6 @@ def get_broker_rating_alerts(portfolio_symbols: list):
                                 break
                         
                         if not broker_found:
-                            # Try common variations
                             if 'morgan stanley' in title or 'morgan stanley' in text:
                                 broker_found = 'Morgan Stanley'
                             elif 'jpmorgan' in title or 'jp morgan' in title or 'jpmorgan' in text:
@@ -291,10 +381,15 @@ def get_broker_rating_alerts(portfolio_symbols: list):
                                 broker_found = 'Goldman Sachs'
                             elif 'bank of america' in title or 'bofa' in title:
                                 broker_found = 'Bank of America'
+                            elif 'ubs' in title or 'ubs' in text:
+                                broker_found = 'UBS'
+                            elif 'barclays' in title or 'barclays' in text:
+                                broker_found = 'Barclays'
+                            elif 'citi' in title or 'citigroup' in text:
+                                broker_found = 'Citi'
                             else:
                                 broker_found = 'Analyst'
                         
-                        # Create unique key
                         alert_key = f"{symbol}_{broker_found}_{pub_date.strftime('%Y%m%d')}"
                         if alert_key in seen_alerts:
                             continue
@@ -303,7 +398,6 @@ def get_broker_rating_alerts(portfolio_symbols: list):
                         action_type = 'upgrade' if is_upgrade else 'downgrade'
                         is_premium = any(pb.lower() in broker_found.lower() for pb in premium_brokers)
                         
-                        # Extract rating from title if possible
                         new_rating = 'N/A'
                         for rating_word in ['buy', 'sell', 'hold', 'outperform', 'underperform', 
                                            'overweight', 'underweight', 'neutral', 'equal-weight']:
@@ -325,15 +419,20 @@ def get_broker_rating_alerts(portfolio_symbols: list):
                             'headline': article.get('title', '')[:100]
                         }
                         all_alerts.append(alert)
-                    except Exception:
+                        if debug:
+                            print(f"[DEBUG] ✅ Found from News: {broker_found} {action_type} {symbol}")
+                    except Exception as e:
+                        if debug:
+                            print(f"[DEBUG] Error parsing news: {e}")
                         continue
         except Exception as e:
-            print(f"FMP news scan error for {symbol}: {e}")
+            if debug:
+                print(f"[DEBUG] FMP news scan error for {symbol}: {e}")
     
     # Sort by score (highest first), then by timestamp (most recent first)
     all_alerts.sort(key=lambda x: (x['score'], x['timestamp']), reverse=True)
     
-    # Remove duplicates that might have slipped through (same symbol+broker+date)
+    # Remove duplicates
     final_alerts = []
     seen_final = set()
     for alert in all_alerts:
@@ -342,7 +441,17 @@ def get_broker_rating_alerts(portfolio_symbols: list):
             seen_final.add(key)
             final_alerts.append(alert)
     
-    return final_alerts[:10]  # Return top 10 alerts
+    if debug:
+        print(f"[DEBUG] Total alerts found: {len(final_alerts)}")
+    
+    return final_alerts[:10]
+
+
+# Cached wrapper - cache key changes every 10 minutes
+@st.cache_data(ttl=600)
+def get_broker_rating_alerts(portfolio_symbols: list):
+    """Cached wrapper for broker rating alerts"""
+    return get_broker_rating_alerts_impl(portfolio_symbols, debug=False)
 
 
 @st.cache_data(ttl=1800)  # Cache for 30 minutes
@@ -1553,15 +1662,28 @@ if page == "🏠 Dashboard":
         # BROKER RATING ALERTS
         # ========================
         st.markdown('<div style="margin-top: 2rem;"></div>', unsafe_allow_html=True)
-        st.markdown("""
-        <div class="section-header">
-            <div class="section-icon">📈</div>
-            <div class="section-title">Broker Rating Changes</div>
-        </div>
-        """, unsafe_allow_html=True)
+        
+        # Header with refresh button
+        col_header, col_refresh = st.columns([4, 1])
+        with col_header:
+            st.markdown("""
+            <div class="section-header">
+                <div class="section-icon">📈</div>
+                <div class="section-title">Broker Rating Changes</div>
+            </div>
+            """, unsafe_allow_html=True)
+        with col_refresh:
+            if st.button("🔄", help="Refresh broker alerts (clears cache)"):
+                st.cache_data.clear()
+                st.rerun()
         
         # Fetch broker rating changes for portfolio stocks
         portfolio_symbols = [h.symbol for h in holdings] if holdings else []
+        
+        # Show what symbols we're checking
+        if portfolio_symbols:
+            st.caption(f"Checking: {', '.join(portfolio_symbols)}")
+        
         broker_alerts = get_broker_rating_alerts(portfolio_symbols)
         
         if broker_alerts:
