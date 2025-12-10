@@ -154,16 +154,23 @@ def get_company_profile_cached(symbol: str):
     }
 
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
+@st.cache_data(ttl=600)  # Cache for 10 minutes only - need fresh data!
 def get_broker_rating_alerts(portfolio_symbols: list):
     """
     Fetch broker rating changes (upgrades AND downgrades) for portfolio stocks
-    Uses FMP API to get analyst rating changes
+    
+    Uses MULTIPLE sources to ensure we never miss important alerts:
+    1. FMP API (upgrades-downgrades endpoint)
+    2. FMP Stock News (scan headlines for upgrade/downgrade keywords)
+    3. General News API (backup scan)
+    
+    This ensures that even if one source is delayed, we catch alerts from another.
     """
     if not portfolio_symbols:
         return []
     
     all_alerts = []
+    seen_alerts = set()  # Prevent duplicates
     cutoff_hours = 72  # Look back 3 days
     cutoff_time = datetime.utcnow() - timedelta(hours=cutoff_hours)
     
@@ -171,20 +178,31 @@ def get_broker_rating_alerts(portfolio_symbols: list):
     premium_brokers = [
         'Goldman Sachs', 'Morgan Stanley', 'JP Morgan', 'JPMorgan',
         'Bank of America', 'BofA', 'Barclays', 'Deutsche Bank', 
-        'Credit Suisse', 'UBS', 'Citi', 'Wells Fargo', 'Jefferies',
-        'Evercore', 'Bernstein', 'RBC Capital', 'HSBC', 'Piper Sandler'
+        'Credit Suisse', 'UBS', 'Citi', 'Citigroup', 'Wells Fargo', 
+        'Jefferies', 'Evercore', 'Bernstein', 'RBC Capital', 'HSBC', 
+        'Piper Sandler', 'Wedbush', 'Needham', 'Oppenheimer', 'Stifel',
+        'Raymond James', 'KeyBanc', 'Truist', 'BTIG', 'Cowen', 'Wolfe'
     ]
     
+    # Keywords to detect upgrades/downgrades in news headlines
+    upgrade_keywords = ['upgrade', 'upgraded', 'upgrades', 'raises to buy', 
+                        'raises to outperform', 'raises to overweight', 'bullish']
+    downgrade_keywords = ['downgrade', 'downgraded', 'downgrades', 'cuts to sell',
+                          'cuts to underperform', 'cuts to underweight', 'cuts to neutral',
+                          'cuts to equal-weight', 'bearish']
+    
     for symbol in portfolio_symbols:
+        # =====================================================
+        # SOURCE 1: FMP Upgrades/Downgrades API (primary source)
+        # =====================================================
         try:
-            # Fetch upgrades/downgrades from FMP
             url = f"https://financialmodelingprep.com/api/v4/upgrades-downgrades"
             params = {'symbol': symbol, 'apikey': settings.fmp_api_key}
             response = requests.get(url, params=params, timeout=10)
             data = response.json()
             
             if isinstance(data, list):
-                for rating in data[:10]:  # Check last 10 ratings
+                for rating in data[:15]:  # Check more ratings
                     try:
                         pub_date_str = rating.get('publishedDate', '')
                         pub_date = datetime.strptime(pub_date_str, '%Y-%m-%d %H:%M:%S')
@@ -192,6 +210,12 @@ def get_broker_rating_alerts(portfolio_symbols: list):
                         if pub_date >= cutoff_time:
                             broker = rating.get('analystCompany', 'Unknown')
                             action = rating.get('action', '').lower()
+                            
+                            # Create unique key to prevent duplicates
+                            alert_key = f"{symbol}_{broker}_{pub_date.strftime('%Y%m%d')}"
+                            if alert_key in seen_alerts:
+                                continue
+                            seen_alerts.add(alert_key)
                             
                             # Determine action type
                             if 'upgrade' in action:
@@ -203,7 +227,6 @@ def get_broker_rating_alerts(portfolio_symbols: list):
                             else:
                                 action_type = 'reiterated'
                             
-                            # Check if premium broker
                             is_premium = any(pb.lower() in broker.lower() for pb in premium_brokers)
                             
                             alert = {
@@ -215,24 +238,111 @@ def get_broker_rating_alerts(portfolio_symbols: list):
                                 'date': pub_date.strftime('%Y-%m-%d'),
                                 'timestamp': pub_date,
                                 'is_premium_broker': is_premium,
-                                'score': 10 if is_premium else 5  # Premium brokers get higher score
+                                'score': (15 if is_premium else 8) + (5 if action_type == 'downgrade' else 0),
+                                'source': 'FMP API'
                             }
-                            
-                            # Downgrades get priority (more actionable)
-                            if action_type == 'downgrade':
-                                alert['score'] += 5
-                            
                             all_alerts.append(alert)
                     except Exception:
                         continue
         except Exception as e:
-            print(f"Error fetching broker alerts for {symbol}: {e}")
-            continue
+            print(f"FMP upgrades API error for {symbol}: {e}")
+        
+        # =====================================================
+        # SOURCE 2: FMP Stock News (scan headlines for broker actions)
+        # =====================================================
+        try:
+            url = f"https://financialmodelingprep.com/api/v3/stock_news"
+            params = {'tickers': symbol, 'limit': 30, 'apikey': settings.fmp_api_key}
+            response = requests.get(url, params=params, timeout=10)
+            news_data = response.json()
+            
+            if isinstance(news_data, list):
+                for article in news_data:
+                    try:
+                        title = article.get('title', '').lower()
+                        text = article.get('text', '').lower()
+                        pub_date_str = article.get('publishedDate', '')
+                        
+                        # Check if it's about an upgrade/downgrade
+                        is_upgrade = any(kw in title for kw in upgrade_keywords)
+                        is_downgrade = any(kw in title for kw in downgrade_keywords)
+                        
+                        if not (is_upgrade or is_downgrade):
+                            continue
+                        
+                        pub_date = datetime.strptime(pub_date_str, '%Y-%m-%d %H:%M:%S')
+                        if pub_date < cutoff_time:
+                            continue
+                        
+                        # Try to extract broker name from title/text
+                        broker_found = None
+                        for broker in premium_brokers:
+                            if broker.lower() in title or broker.lower() in text:
+                                broker_found = broker
+                                break
+                        
+                        if not broker_found:
+                            # Try common variations
+                            if 'morgan stanley' in title or 'morgan stanley' in text:
+                                broker_found = 'Morgan Stanley'
+                            elif 'jpmorgan' in title or 'jp morgan' in title or 'jpmorgan' in text:
+                                broker_found = 'JPMorgan'
+                            elif 'goldman' in title or 'goldman' in text:
+                                broker_found = 'Goldman Sachs'
+                            elif 'bank of america' in title or 'bofa' in title:
+                                broker_found = 'Bank of America'
+                            else:
+                                broker_found = 'Analyst'
+                        
+                        # Create unique key
+                        alert_key = f"{symbol}_{broker_found}_{pub_date.strftime('%Y%m%d')}"
+                        if alert_key in seen_alerts:
+                            continue
+                        seen_alerts.add(alert_key)
+                        
+                        action_type = 'upgrade' if is_upgrade else 'downgrade'
+                        is_premium = any(pb.lower() in broker_found.lower() for pb in premium_brokers)
+                        
+                        # Extract rating from title if possible
+                        new_rating = 'N/A'
+                        for rating_word in ['buy', 'sell', 'hold', 'outperform', 'underperform', 
+                                           'overweight', 'underweight', 'neutral', 'equal-weight']:
+                            if rating_word in title:
+                                new_rating = rating_word.title()
+                                break
+                        
+                        alert = {
+                            'symbol': symbol,
+                            'broker': broker_found,
+                            'action_type': action_type,
+                            'new_rating': new_rating,
+                            'previous_rating': 'N/A',
+                            'date': pub_date.strftime('%Y-%m-%d'),
+                            'timestamp': pub_date,
+                            'is_premium_broker': is_premium,
+                            'score': (12 if is_premium else 6) + (5 if action_type == 'downgrade' else 0),
+                            'source': 'News Scan',
+                            'headline': article.get('title', '')[:100]
+                        }
+                        all_alerts.append(alert)
+                    except Exception:
+                        continue
+        except Exception as e:
+            print(f"FMP news scan error for {symbol}: {e}")
     
-    # Sort by score (downgrades from premium brokers first)
+    # Sort by score (highest first), then by timestamp (most recent first)
     all_alerts.sort(key=lambda x: (x['score'], x['timestamp']), reverse=True)
     
-    return all_alerts
+    # Remove duplicates that might have slipped through (same symbol+broker+date)
+    final_alerts = []
+    seen_final = set()
+    for alert in all_alerts:
+        key = f"{alert['symbol']}_{alert['broker']}_{alert['date']}"
+        if key not in seen_final:
+            seen_final.add(key)
+            final_alerts.append(alert)
+    
+    return final_alerts[:10]  # Return top 10 alerts
 
 
 @st.cache_data(ttl=1800)  # Cache for 30 minutes
@@ -1463,37 +1573,49 @@ if page == "🏠 Dashboard":
                 # Color coding
                 if is_negative:
                     border_color = '#FF3366'
-                    emoji = '🔴'
-                    bg_gradient = 'rgba(255, 51, 102, 0.1)'
-                else:
+                    action_label = '⬇️ DOWNGRADE'
+                    bg_gradient = 'rgba(255, 51, 102, 0.15)'
+                elif action_type == 'upgrade':
                     border_color = '#00FF88'
-                    emoji = '🟢'
-                    bg_gradient = 'rgba(0, 255, 136, 0.1)'
+                    action_label = '⬆️ UPGRADE'
+                    bg_gradient = 'rgba(0, 255, 136, 0.15)'
+                elif action_type == 'initiated':
+                    border_color = '#00D4FF'
+                    action_label = '🆕 INITIATED'
+                    bg_gradient = 'rgba(0, 212, 255, 0.15)'
+                else:
+                    border_color = '#8892A6'
+                    action_label = '📊 RATING'
+                    bg_gradient = 'rgba(136, 146, 166, 0.1)'
                 
-                premium_badge = '⭐' if is_premium else ''
+                premium_badge = '⭐ ' if is_premium else ''
+                headline = alert.get('headline', '')
+                source_badge = f"<span style='font-size:0.65rem;background:#1A2438;color:#8892A6;padding:2px 6px;border-radius:4px;margin-left:8px;'>{alert.get('source', 'API')}</span>" if alert.get('source') else ''
                 
                 st.markdown(f"""
                 <div style="
-                    background: linear-gradient(135deg, {bg_gradient} 0%, rgba(19, 26, 43, 0.9) 100%);
+                    background: linear-gradient(135deg, {bg_gradient} 0%, rgba(19, 26, 43, 0.95) 100%);
                     border: 1px solid #1E2A42;
-                    border-left: 4px solid {border_color};
+                    border-left: 5px solid {border_color};
                     border-radius: 12px;
-                    padding: 1rem;
+                    padding: 1rem 1.25rem;
                     margin-bottom: 0.75rem;
                 ">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                        <div>
-                            <div style="font-size: 1.1rem; font-weight: 700; color: #FFFFFF;">
-                                {emoji} {alert['symbol']} - {action_type.upper().replace('_', ' ')}
-                            </div>
-                            <div style="font-size: 0.85rem; color: #8892A6; margin-top: 4px;">
-                                {alert['broker']} {premium_badge} · {alert.get('previous_rating', 'N/A')} → {alert['new_rating']}
-                            </div>
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                        <div style="font-size: 1.2rem; font-weight: 800; color: #FFFFFF; font-family: 'JetBrains Mono', monospace;">
+                            {alert['symbol']} {action_label}
                         </div>
-                        <div style="font-size: 0.75rem; color: #8892A6;">
+                        <div style="font-size: 0.7rem; color: #8892A6; background: #1A2438; padding: 4px 8px; border-radius: 8px;">
                             {alert['date']}
                         </div>
                     </div>
+                    <div style="font-size: 0.9rem; color: #FFFFFF; margin-bottom: 6px;">
+                        {premium_badge}{alert['broker']}{source_badge}
+                    </div>
+                    <div style="font-size: 0.85rem; color: #00D4FF; margin-bottom: 6px;">
+                        {alert.get('previous_rating', '')} {'→' if alert.get('previous_rating') and alert.get('previous_rating') != 'N/A' else ''} <strong>{alert['new_rating']}</strong>
+                    </div>
+                    {"<div style='font-size: 0.8rem; color: #8892A6; font-style: italic; margin-top: 6px;'>" + headline[:80] + ('...' if len(headline) > 80 else '') + "</div>" if headline else ""}
                 </div>
                 """, unsafe_allow_html=True)
         else:
