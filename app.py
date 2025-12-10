@@ -153,6 +153,87 @@ def get_company_profile_cached(symbol: str):
         'exchange': ''
     }
 
+
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def get_broker_rating_alerts(portfolio_symbols: list):
+    """
+    Fetch broker rating changes (upgrades AND downgrades) for portfolio stocks
+    Uses FMP API to get analyst rating changes
+    """
+    if not portfolio_symbols:
+        return []
+    
+    all_alerts = []
+    cutoff_hours = 72  # Look back 3 days
+    cutoff_time = datetime.utcnow() - timedelta(hours=cutoff_hours)
+    
+    # Premium brokers (their ratings carry more weight)
+    premium_brokers = [
+        'Goldman Sachs', 'Morgan Stanley', 'JP Morgan', 'JPMorgan',
+        'Bank of America', 'BofA', 'Barclays', 'Deutsche Bank', 
+        'Credit Suisse', 'UBS', 'Citi', 'Wells Fargo', 'Jefferies',
+        'Evercore', 'Bernstein', 'RBC Capital', 'HSBC', 'Piper Sandler'
+    ]
+    
+    for symbol in portfolio_symbols:
+        try:
+            # Fetch upgrades/downgrades from FMP
+            url = f"https://financialmodelingprep.com/api/v4/upgrades-downgrades"
+            params = {'symbol': symbol, 'apikey': settings.fmp_api_key}
+            response = requests.get(url, params=params, timeout=10)
+            data = response.json()
+            
+            if isinstance(data, list):
+                for rating in data[:10]:  # Check last 10 ratings
+                    try:
+                        pub_date_str = rating.get('publishedDate', '')
+                        pub_date = datetime.strptime(pub_date_str, '%Y-%m-%d %H:%M:%S')
+                        
+                        if pub_date >= cutoff_time:
+                            broker = rating.get('analystCompany', 'Unknown')
+                            action = rating.get('action', '').lower()
+                            
+                            # Determine action type
+                            if 'upgrade' in action:
+                                action_type = 'upgrade'
+                            elif 'downgrade' in action:
+                                action_type = 'downgrade'
+                            elif 'initiat' in action:
+                                action_type = 'initiated'
+                            else:
+                                action_type = 'reiterated'
+                            
+                            # Check if premium broker
+                            is_premium = any(pb.lower() in broker.lower() for pb in premium_brokers)
+                            
+                            alert = {
+                                'symbol': symbol,
+                                'broker': broker,
+                                'action_type': action_type,
+                                'new_rating': rating.get('newGrade', 'N/A'),
+                                'previous_rating': rating.get('previousGrade', 'N/A'),
+                                'date': pub_date.strftime('%Y-%m-%d'),
+                                'timestamp': pub_date,
+                                'is_premium_broker': is_premium,
+                                'score': 10 if is_premium else 5  # Premium brokers get higher score
+                            }
+                            
+                            # Downgrades get priority (more actionable)
+                            if action_type == 'downgrade':
+                                alert['score'] += 5
+                            
+                            all_alerts.append(alert)
+                    except Exception:
+                        continue
+        except Exception as e:
+            print(f"Error fetching broker alerts for {symbol}: {e}")
+            continue
+    
+    # Sort by score (downgrades from premium brokers first)
+    all_alerts.sort(key=lambda x: (x['score'], x['timestamp']), reverse=True)
+    
+    return all_alerts
+
 # ===========================
 # STYLING
 # ===========================
@@ -1183,6 +1264,78 @@ if page == "🏠 Dashboard":
                     display_stock_card_beautiful(symbol, company_name, sector, sector_emoji)
         else:
             st.info("📊 No stocks in your portfolio yet. Head to Portfolio to add some!")
+        
+        # ========================
+        # BROKER RATING ALERTS
+        # ========================
+        st.markdown('<div style="margin-top: 2rem;"></div>', unsafe_allow_html=True)
+        st.markdown("""
+        <div class="section-header">
+            <div class="section-icon">📈</div>
+            <div class="section-title">Broker Rating Changes</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Fetch broker rating changes for portfolio stocks
+        portfolio_symbols = [h.symbol for h in holdings] if holdings else []
+        broker_alerts = get_broker_rating_alerts(portfolio_symbols)
+        
+        if broker_alerts:
+            for alert in broker_alerts[:5]:
+                action_type = alert.get('action_type', '')
+                is_negative = action_type in ['downgrade', 'target_lowered']
+                is_premium = alert.get('is_premium_broker', False)
+                
+                # Color coding
+                if is_negative:
+                    border_color = '#FF3366'
+                    emoji = '🔴'
+                    bg_gradient = 'rgba(255, 51, 102, 0.1)'
+                else:
+                    border_color = '#00FF88'
+                    emoji = '🟢'
+                    bg_gradient = 'rgba(0, 255, 136, 0.1)'
+                
+                premium_badge = '⭐' if is_premium else ''
+                
+                st.markdown(f"""
+                <div style="
+                    background: linear-gradient(135deg, {bg_gradient} 0%, rgba(19, 26, 43, 0.9) 100%);
+                    border: 1px solid #1E2A42;
+                    border-left: 4px solid {border_color};
+                    border-radius: 12px;
+                    padding: 1rem;
+                    margin-bottom: 0.75rem;
+                ">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                        <div>
+                            <div style="font-size: 1.1rem; font-weight: 700; color: #FFFFFF;">
+                                {emoji} {alert['symbol']} - {action_type.upper().replace('_', ' ')}
+                            </div>
+                            <div style="font-size: 0.85rem; color: #8892A6; margin-top: 4px;">
+                                {alert['broker']} {premium_badge} · {alert.get('previous_rating', 'N/A')} → {alert['new_rating']}
+                            </div>
+                        </div>
+                        <div style="font-size: 0.75rem; color: #8892A6;">
+                            {alert['date']}
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style="
+                background: rgba(19, 26, 43, 0.5);
+                border: 1px dashed #1E2A42;
+                border-radius: 12px;
+                padding: 2rem;
+                text-align: center;
+                color: #8892A6;
+            ">
+                <div style="font-size: 2rem; margin-bottom: 0.5rem;">📊</div>
+                <div>No recent broker rating changes for your portfolio</div>
+            </div>
+            """, unsafe_allow_html=True)
     
     with col2:
         st.markdown("""
