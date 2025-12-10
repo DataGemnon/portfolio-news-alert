@@ -234,6 +234,110 @@ def get_broker_rating_alerts(portfolio_symbols: list):
     
     return all_alerts
 
+
+@st.cache_data(ttl=1800)  # Cache for 30 minutes
+def get_fed_macro_alerts():
+    """
+    Fetch Fed/FOMC and major macro economic alerts
+    These affect ALL stocks and should always be displayed
+    """
+    alerts = []
+    
+    # HARDCODED BREAKING NEWS - Fed Rate Cut Dec 10, 2025
+    # This ensures critical Fed news is always displayed
+    fed_rate_cut_date = datetime(2025, 12, 10, 19, 0, 0)  # 2PM EST = 7PM UTC
+    if datetime.utcnow() >= fed_rate_cut_date and datetime.utcnow() <= fed_rate_cut_date + timedelta(days=3):
+        alerts.append({
+            'title': '🚨 BREAKING: Fed Cuts Rates by 25bps to 3.50%-3.75%',
+            'text': 'The Federal Reserve cut interest rates for the third consecutive time, lowering the target range by 25 basis points. Powell signals "wait and see" approach for 2026. Three dissents highlight FOMC division.',
+            'url': 'https://www.federalreserve.gov/newsevents/pressreleases/monetary20251210a.htm',
+            'source': 'Federal Reserve',
+            'date': '2025-12-10 14:00',
+            'timestamp': fed_rate_cut_date,
+            'alert_type': 'rate_cut',
+            'emoji': '🏛️',
+            'color': '#00FF88',
+            'is_breaking': True
+        })
+    
+    try:
+        # Fetch Fed news from FMP
+        url = "https://financialmodelingprep.com/api/v4/general_news"
+        params = {
+            'apikey': settings.fmp_api_key,
+            'page': 0
+        }
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        
+        # Keywords for Fed/macro news
+        fed_keywords = [
+            'federal reserve', 'fed ', 'fomc', 'rate cut', 'rate hike', 
+            'interest rate', 'powell', 'monetary policy', 'basis point',
+            'inflation', 'cpi', 'pce', 'employment', 'jobs report', 
+            'nonfarm payroll', 'gdp', 'recession', 'treasury yield'
+        ]
+        
+        if isinstance(data, list):
+            for article in data[:50]:
+                title = article.get('title', '').lower()
+                text = article.get('text', '').lower()
+                
+                # Check if it's Fed/macro related
+                is_macro = any(kw in title or kw in text for kw in fed_keywords)
+                
+                if is_macro:
+                    pub_date_str = article.get('publishedDate', '')
+                    try:
+                        pub_date = datetime.strptime(pub_date_str, '%Y-%m-%d %H:%M:%S')
+                        
+                        # Only last 48 hours
+                        if pub_date >= datetime.utcnow() - timedelta(hours=48):
+                            # Determine alert type
+                            title_lower = article.get('title', '').lower()
+                            if 'cut' in title_lower and ('rate' in title_lower or 'fed' in title_lower):
+                                alert_type = 'rate_cut'
+                                emoji = '📉'
+                                color = '#00FF88'
+                            elif 'hike' in title_lower or 'raise' in title_lower:
+                                alert_type = 'rate_hike'
+                                emoji = '📈'
+                                color = '#FF3366'
+                            elif 'inflation' in title_lower:
+                                alert_type = 'inflation'
+                                emoji = '🔥'
+                                color = '#FFB800'
+                            elif 'fomc' in title_lower or 'powell' in title_lower:
+                                alert_type = 'fomc'
+                                emoji = '🏛️'
+                                color = '#00D4FF'
+                            else:
+                                alert_type = 'macro'
+                                emoji = '📊'
+                                color = '#8892A6'
+                            
+                            alerts.append({
+                                'title': article.get('title', 'Macro Alert'),
+                                'text': article.get('text', '')[:200] + '...' if len(article.get('text', '')) > 200 else article.get('text', ''),
+                                'url': article.get('url', ''),
+                                'source': article.get('site', 'News'),
+                                'date': pub_date.strftime('%Y-%m-%d %H:%M'),
+                                'timestamp': pub_date,
+                                'alert_type': alert_type,
+                                'emoji': emoji,
+                                'color': color
+                            })
+                    except:
+                        continue
+    except Exception as e:
+        print(f"Error fetching macro alerts: {e}")
+    
+    # Sort by timestamp (most recent first), but keep breaking news at top
+    alerts.sort(key=lambda x: (x.get('is_breaking', False), x['timestamp']), reverse=True)
+    
+    # Return top 5 macro alerts
+    return alerts[:5]
+
 # ===========================
 # STYLING
 # ===========================
@@ -1178,6 +1282,55 @@ if page == "🏠 Dashboard":
     
     st.markdown('<p class="main-header">Dashboard</p>', unsafe_allow_html=True)
     st.markdown('<p class="sub-header">Real-time insights for your portfolio</p>', unsafe_allow_html=True)
+    
+    # ========================
+    # 🏛️ FED / MACRO ALERTS (affects ALL stocks)
+    # ========================
+    macro_alerts = get_fed_macro_alerts()
+    
+    if macro_alerts:
+        st.markdown("""
+        <div style="
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%);
+            border: 2px solid rgba(0, 212, 255, 0.3);
+            border-radius: 16px;
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+        ">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 1rem;">
+                <span style="font-size: 1.5rem;">🏛️</span>
+                <span style="font-size: 1.1rem; font-weight: 700; color: #00D4FF; text-transform: uppercase; letter-spacing: 1px;">
+                    Fed & Macro Alerts
+                </span>
+                <span style="background: #FF3366; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600;">
+                    MARKET-WIDE
+                </span>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        for alert in macro_alerts[:3]:
+            st.markdown(f"""
+            <div style="
+                background: rgba(10, 14, 23, 0.7);
+                border-left: 4px solid {alert['color']};
+                border-radius: 8px;
+                padding: 0.75rem 1rem;
+                margin-bottom: 0.5rem;
+            ">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <div style="flex: 1;">
+                        <div style="font-size: 0.95rem; font-weight: 600; color: #FFFFFF; margin-bottom: 4px;">
+                            {alert['emoji']} {alert['title'][:80]}{'...' if len(alert['title']) > 80 else ''}
+                        </div>
+                        <div style="font-size: 0.8rem; color: #8892A6;">
+                            {alert['source']} · {alert['date']}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("</div>", unsafe_allow_html=True)
     
     db = next(get_db())
     user = db.query(User).filter(User.email == st.session_state.user_email).first()
