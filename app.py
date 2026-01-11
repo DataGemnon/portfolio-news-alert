@@ -176,6 +176,15 @@ def get_broker_rating_alerts_impl(portfolio_symbols: list, debug: bool = False):
     if debug:
         print(f"[DEBUG] Checking symbols: {portfolio_symbols}")
         print(f"[DEBUG] Cutoff time: {cutoff_time}")
+        
+    # Check for AI Service availability
+    try:
+        from services.ai_analyzer import AIAnalyzer
+        ai_analyzer = AIAnalyzer()
+        has_ai = True
+    except:
+        has_ai = False
+        if debug: print("[DEBUG] AI Service not available")
     
     # Premium brokers (their ratings carry more weight)
     premium_brokers = [
@@ -390,31 +399,90 @@ def get_broker_rating_alerts_impl(portfolio_symbols: list, debug: bool = False):
                             else:
                                 broker_found = 'Analyst'
                         
+                        action_type = 'upgrade' if is_upgrade else 'downgrade'
+                        new_rating = 'N/A'
+                        previous_rating = 'N/A'
+                        
+                        # Keyword rating extraction (STRICTER)
+                        import re
+                        for rating_word in ['buy', 'sell', 'hold', 'outperform', 'underperform', 
+                                           'overweight', 'underweight', 'neutral', 'equal-weight']:
+                            # Use regex to match whole words only (prevents 'holdings' -> 'hold')
+                            pattern = r'\b' + re.escape(rating_word) + r'\b'
+                            if re.search(pattern, title, re.IGNORECASE):
+                                new_rating = rating_word.title()
+                                break
+                                
+                        # AI ENHANCEMENT: If we have vague data ("Analyst" or "N/A"), ask AI
+                        if has_ai and (broker_found == 'Analyst' or new_rating == 'N/A'):
+                            if debug: print(f"[DEBUG] 🧠 Invoking AI to extract broker details for: {title[:50]}...")
+                            try:
+                                ai_data = ai_analyzer.extract_broker_rating(title, text, symbol=symbol)
+                                
+                                # CRITICAL: If AI says action is "N/A", it means this is a false positive (not relevant to this stock)
+                                if ai_data.get('action') == 'N/A' and new_rating == 'N/A':
+                                    if debug: print(f"[DEBUG] AI rejected alert for {symbol} (Action: N/A)")
+                                    continue
+                                
+                                if ai_data.get('broker') and ai_data.get('broker') != 'Analyst':
+                                    broker_found = ai_data.get('broker')
+                                
+                                # Refine action if AI identifies it better
+                                if ai_data.get('action') and ai_data.get('action') != 'N/A': 
+                                    ai_action = ai_data.get('action').lower()
+                                    if 'upgrade' in ai_action: action_type = 'upgrade'
+                                    elif 'downgrade' in ai_action: action_type = 'downgrade'
+                                    elif 'initiate' in ai_action: action_type = 'initiated'
+                                
+                                if ai_data.get('new_rating') and ai_data.get('new_rating') != 'N/A':
+                                    new_rating = ai_data.get('new_rating')
+                                    
+                                if ai_data.get('old_rating') and ai_data.get('old_rating') != 'N/A':
+                                    previous_rating = ai_data.get('old_rating')
+                                    
+                                old_target = ai_data.get('old_target', 'N/A')
+                                new_target = ai_data.get('new_target', 'N/A')
+                                
+                                # If rating didn't change but target did, it's still an upgrade/downgrade event
+                                if action_type == 'reiterated' or action_type == 'N/A':
+                                    if old_target != 'N/A' and new_target != 'N/A':
+                                        try:
+                                            # Simple parsing to compare numbers (stripping $ and commas)
+                                            ot_val = float(str(old_target).replace('$', '').replace(',', ''))
+                                            nt_val = float(str(new_target).replace('$', '').replace(',', ''))
+                                            if nt_val > ot_val: action_type = 'target_raised'
+                                            elif nt_val < ot_val: action_type = 'target_lowered'
+                                        except:
+                                            pass
+                                     
+                            except Exception as e:
+                                if debug: print(f"[DEBUG] AI Extraction failed: {e}")
+                                old_target = 'N/A'
+                                new_target = 'N/A'
+                        else:
+                            old_target = 'N/A'
+                            new_target = 'N/A'
+                        
                         alert_key = f"{symbol}_{broker_found}_{pub_date.strftime('%Y%m%d')}"
                         if alert_key in seen_alerts:
                             continue
                         seen_alerts.add(alert_key)
                         
-                        action_type = 'upgrade' if is_upgrade else 'downgrade'
                         is_premium = any(pb.lower() in broker_found.lower() for pb in premium_brokers)
-                        
-                        new_rating = 'N/A'
-                        for rating_word in ['buy', 'sell', 'hold', 'outperform', 'underperform', 
-                                           'overweight', 'underweight', 'neutral', 'equal-weight']:
-                            if rating_word in title:
-                                new_rating = rating_word.title()
-                                break
                         
                         alert = {
                             'symbol': symbol,
                             'broker': broker_found,
                             'action_type': action_type,
                             'new_rating': new_rating,
-                            'previous_rating': 'N/A',
+                            'previous_rating': previous_rating,
+                            'old_target': old_target,
+                            'new_target': new_target,
                             'date': pub_date.strftime('%Y-%m-%d'),
                             'timestamp': pub_date,
                             'is_premium_broker': is_premium,
                             'score': (12 if is_premium else 6) + (5 if action_type == 'downgrade' else 0),
+
                             'source': 'News Scan',
                             'headline': article.get('title', '')[:100]
                         }
@@ -447,9 +515,12 @@ def get_broker_rating_alerts_impl(portfolio_symbols: list, debug: bool = False):
     return final_alerts[:10]
 
 
-# Cached wrapper - cache key changes every 10 minutes
+
+# Cached wrapper - cache key changes every 10 minutes - UPDATED V2 for cache busting
+# Cached wrapper - cache key changes every 10 minutes - UPDATED V2 for cache busting
+# Cached wrapper - cache key changes every 10 minutes - UPDATED V4 for cache busting
 @st.cache_data(ttl=600)
-def get_broker_rating_alerts(portfolio_symbols: list):
+def get_broker_rating_alerts_v4(portfolio_symbols: list):
     """Cached wrapper for broker rating alerts"""
     return get_broker_rating_alerts_impl(portfolio_symbols, debug=False)
 
@@ -561,681 +632,11 @@ def get_fed_macro_alerts():
 # STYLING
 # ===========================
 
-st.markdown("""
-<style>
-    /* Import Google Fonts - Modern Athletic Typography */
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
-    
-    /* Root Variables - Electric Blue & Dark Theme */
-    :root {
-        --primary: #00D4FF;
-        --primary-dark: #00A8CC;
-        --secondary: #FF3366;
-        --accent: #00FF88;
-        --warning: #FFB800;
-        --bg-dark: #0A0E17;
-        --bg-card: #131A2B;
-        --bg-card-hover: #1A2438;
-        --text-primary: #FFFFFF;
-        --text-secondary: #8892A6;
-        --border-color: #1E2A42;
-        --gradient-1: linear-gradient(135deg, #00D4FF 0%, #00FF88 100%);
-        --gradient-2: linear-gradient(135deg, #FF3366 0%, #FF6B35 100%);
-        --gradient-3: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
-    }
-    
-    /* Global Styles */
-    .stApp {
-        background: var(--bg-dark);
-        font-family: 'Outfit', sans-serif;
-    }
-    
-    /* Hide Streamlit Branding - BUT keep sidebar toggle visible */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    
-    /* Keep the sidebar collapse/expand button always visible */
-    [data-testid="collapsedControl"] {
-        display: flex !important;
-        visibility: visible !important;
-        color: var(--primary) !important;
-        background: var(--bg-card) !important;
-        border: 1px solid var(--border-color) !important;
-        border-radius: 8px !important;
-    }
-    
-    /* Style the sidebar toggle button */
-    button[kind="header"] {
-        visibility: visible !important;
-    }
-    
-    /* Ensure sidebar expand button is always clickable */
-    [data-testid="stSidebarCollapsedControl"] {
-        display: block !important;
-        visibility: visible !important;
-        z-index: 999999 !important;
-    }
-    
-    /* Sidebar Styling */
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0D1321 0%, #131A2B 100%);
-        border-right: 1px solid var(--border-color);
-    }
-    
-    [data-testid="stSidebar"] .stRadio > label {
-        color: var(--text-secondary) !important;
-        font-weight: 500;
-    }
-    
-    /* ===========================
-       MARKET PULSE HEADER
-       =========================== */
-    .market-pulse-container {
-        background: linear-gradient(135deg, #0D1321 0%, #131A2B 100%);
-        border: 1px solid var(--border-color);
-        border-radius: 16px;
-        padding: 1rem 1.5rem;
-        margin-bottom: 1.5rem;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        flex-wrap: wrap;
-        gap: 1rem;
-    }
-    
-    .market-pulse-title {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        color: var(--text-secondary);
-        font-size: 0.85rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 1.5px;
-    }
-    
-    .pulse-dot {
-        width: 8px;
-        height: 8px;
-        background: var(--accent);
-        border-radius: 50%;
-        animation: pulse 2s infinite;
-    }
-    
-    @keyframes pulse {
-        0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.7); }
-        50% { opacity: 0.8; box-shadow: 0 0 0 6px rgba(0, 255, 136, 0); }
-    }
-    
-    .market-indices {
-        display: flex;
-        gap: 2rem;
-        flex-wrap: wrap;
-    }
-    
-    .index-item {
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        min-width: 120px;
-    }
-    
-    .index-name {
-        color: var(--text-secondary);
-        font-size: 0.75rem;
-        font-weight: 500;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-bottom: 2px;
-    }
-    
-    .index-value {
-        color: var(--text-primary);
-        font-size: 1.1rem;
-        font-weight: 700;
-        font-family: 'JetBrains Mono', monospace;
-    }
-    
-    .index-change {
-        font-size: 0.85rem;
-        font-weight: 600;
-        font-family: 'JetBrains Mono', monospace;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-    }
-    
-    .index-change.positive {
-        color: var(--accent);
-    }
-    
-    .index-change.negative {
-        color: var(--secondary);
-    }
-    
-    .market-status {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        background: rgba(0, 255, 136, 0.1);
-        padding: 8px 14px;
-        border-radius: 20px;
-        font-size: 0.8rem;
-        font-weight: 600;
-        color: var(--accent);
-    }
-    
-    .market-status.closed {
-        background: rgba(255, 51, 102, 0.1);
-        color: var(--secondary);
-    }
-    
-    /* ===========================
-       MAIN HEADER
-       =========================== */
-    .main-header {
-        background: var(--gradient-1);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        font-size: 2.8rem;
-        font-weight: 800;
-        letter-spacing: -1px;
-        margin-bottom: 0.5rem;
-        font-family: 'Outfit', sans-serif;
-    }
-    
-    .sub-header {
-        color: var(--text-secondary);
-        font-size: 1.1rem;
-        font-weight: 400;
-        margin-bottom: 2rem;
-    }
-    
-    /* Logo Section */
-    .logo-container {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 1.5rem 0;
-        margin-bottom: 1rem;
-    }
-    
-    .logo-icon {
-        width: 42px;
-        height: 42px;
-        background: var(--gradient-1);
-        border-radius: 12px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1.4rem;
-        box-shadow: 0 8px 32px rgba(0, 212, 255, 0.3);
-    }
-    
-    .logo-text {
-        font-size: 1.5rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        letter-spacing: -0.5px;
-    }
-    
-    .logo-text span {
-        color: var(--primary);
-    }
-    
-    /* ===========================
-       ENRICHED PORTFOLIO CARDS
-       =========================== */
-    .stock-card {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
-        border-radius: 16px;
-        padding: 1.25rem;
-        margin: 0.5rem 0;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        cursor: pointer;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .stock-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 3px;
-        background: var(--gradient-1);
-        opacity: 0;
-        transition: opacity 0.3s ease;
-    }
-    
-    .stock-card:hover {
-        border-color: var(--primary);
-        transform: translateY(-4px);
-        box-shadow: 0 20px 40px rgba(0, 212, 255, 0.15);
-    }
-    
-    .stock-card:hover::before {
-        opacity: 1;
-    }
-    
-    .stock-card-header {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin-bottom: 0.75rem;
-    }
-    
-    .stock-logo {
-        width: 44px;
-        height: 44px;
-        border-radius: 12px;
-        background: var(--bg-card-hover);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        overflow: hidden;
-        border: 1px solid var(--border-color);
-    }
-    
-    .stock-logo img {
-        width: 100%;
-        height: 100%;
-        object-fit: contain;
-        padding: 6px;
-    }
-    
-    .stock-logo-placeholder {
-        font-size: 1.2rem;
-        font-weight: 700;
-        color: var(--primary);
-        font-family: 'JetBrains Mono', monospace;
-    }
-    
-    .stock-info {
-        flex: 1;
-    }
-    
-    .stock-symbol {
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        font-family: 'JetBrains Mono', monospace;
-        letter-spacing: 0.5px;
-    }
-    
-    .stock-name {
-        font-size: 0.85rem;
-        color: var(--text-secondary);
-        font-weight: 400;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        max-width: 150px;
-    }
-    
-    .stock-badge {
-        background: rgba(0, 212, 255, 0.1);
-        color: var(--primary);
-        padding: 6px 12px;
-        border-radius: 20px;
-        font-size: 0.7rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    
-    .stock-meta {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-top: 0.5rem;
-    }
-    
-    .stock-sector {
-        font-size: 0.75rem;
-        color: var(--text-secondary);
-        background: var(--bg-card-hover);
-        padding: 4px 10px;
-        border-radius: 12px;
-    }
-    
-    .stock-exchange {
-        font-size: 0.7rem;
-        color: var(--text-secondary);
-        font-family: 'JetBrains Mono', monospace;
-    }
-    
-    /* ===========================
-       STAT CARDS
-       =========================== */
-    .stat-card {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
-        border-radius: 16px;
-        padding: 1.5rem;
-        transition: all 0.3s ease;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .stat-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 3px;
-        background: var(--gradient-1);
-        opacity: 0;
-        transition: opacity 0.3s ease;
-    }
-    
-    .stat-card:hover {
-        border-color: var(--primary);
-        transform: translateY(-4px);
-        box-shadow: 0 20px 40px rgba(0, 212, 255, 0.15);
-    }
-    
-    .stat-card:hover::before {
-        opacity: 1;
-    }
-    
-    .stat-label {
-        color: var(--text-secondary);
-        font-size: 0.85rem;
-        font-weight: 500;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        margin-bottom: 0.5rem;
-    }
-    
-    .stat-value {
-        color: var(--text-primary);
-        font-size: 2.2rem;
-        font-weight: 700;
-        font-family: 'JetBrains Mono', monospace;
-    }
-    
-    .stat-value.positive {
-        color: var(--accent);
-    }
-    
-    .stat-value.negative {
-        color: var(--secondary);
-    }
-    
-    /* ===========================
-       ALERT CARDS
-       =========================== */
-    .alert-card {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
-        border-radius: 16px;
-        padding: 1.5rem;
-        margin: 1rem 0;
-        position: relative;
-        transition: all 0.3s ease;
-    }
-    
-    .alert-card:hover {
-        border-color: rgba(0, 212, 255, 0.5);
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-    }
-    
-    .alert-card.urgent {
-        border-left: 4px solid var(--secondary);
-        background: linear-gradient(135deg, rgba(255, 51, 102, 0.05) 0%, var(--bg-card) 100%);
-    }
-    
-    .alert-card.normal {
-        border-left: 4px solid var(--primary);
-    }
-    
-    .alert-symbol {
-        display: inline-block;
-        background: var(--gradient-1);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-size: 1.3rem;
-        font-weight: 800;
-        font-family: 'JetBrains Mono', monospace;
-    }
-    
-    .alert-title {
-        color: var(--text-primary);
-        font-size: 1rem;
-        font-weight: 500;
-        margin: 0.5rem 0;
-        line-height: 1.5;
-    }
-    
-    .alert-meta {
-        color: var(--text-secondary);
-        font-size: 0.85rem;
-        display: flex;
-        gap: 1rem;
-        flex-wrap: wrap;
-        margin-top: 0.75rem;
-    }
-    
-    /* Impact Badge */
-    .impact-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px 14px;
-        border-radius: 20px;
-        font-size: 0.8rem;
-        font-weight: 600;
-    }
-    
-    .impact-high {
-        background: rgba(255, 51, 102, 0.15);
-        color: var(--secondary);
-    }
-    
-    .impact-medium {
-        background: rgba(255, 184, 0, 0.15);
-        color: var(--warning);
-    }
-    
-    .impact-low {
-        background: rgba(0, 255, 136, 0.15);
-        color: var(--accent);
-    }
-    
-    /* Section Headers */
-    .section-header {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin: 2rem 0 1.5rem 0;
-    }
-    
-    .section-title {
-        color: var(--text-primary);
-        font-size: 1.4rem;
-        font-weight: 700;
-        letter-spacing: -0.5px;
-    }
-    
-    .section-icon {
-        width: 36px;
-        height: 36px;
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
-        border-radius: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1.1rem;
-    }
-    
-    /* Buttons */
-    .stButton > button {
-        background: var(--gradient-1) !important;
-        color: #0A0E17 !important;
-        border: none !important;
-        border-radius: 12px !important;
-        padding: 0.75rem 2rem !important;
-        font-weight: 600 !important;
-        font-family: 'Outfit', sans-serif !important;
-        font-size: 0.95rem !important;
-        letter-spacing: 0.3px !important;
-        transition: all 0.3s ease !important;
-        box-shadow: 0 8px 24px rgba(0, 212, 255, 0.25) !important;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px) !important;
-        box-shadow: 0 12px 32px rgba(0, 212, 255, 0.35) !important;
-    }
-    
-    /* Input Fields */
-    .stTextInput > div > div > input {
-        background: var(--bg-card) !important;
-        border: 1px solid var(--border-color) !important;
-        border-radius: 12px !important;
-        color: var(--text-primary) !important;
-        font-family: 'Outfit', sans-serif !important;
-        padding: 0.75rem 1rem !important;
-    }
-    
-    .stTextInput > div > div > input:focus {
-        border-color: var(--primary) !important;
-        box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.15) !important;
-    }
-    
-    .stNumberInput > div > div > input {
-        background: var(--bg-card) !important;
-        border: 1px solid var(--border-color) !important;
-        border-radius: 12px !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* Select Box */
-    .stSelectbox > div > div {
-        background: var(--bg-card) !important;
-        border: 1px solid var(--border-color) !important;
-        border-radius: 12px !important;
-    }
-    
-    /* Expander */
-    .streamlit-expanderHeader {
-        background: var(--bg-card) !important;
-        border-radius: 12px !important;
-        color: var(--text-primary) !important;
-    }
-    
-    /* Metrics Override */
-    [data-testid="stMetricValue"] {
-        font-family: 'JetBrains Mono', monospace !important;
-        font-weight: 700 !important;
-        color: var(--text-primary) !important;
-    }
-    
-    [data-testid="stMetricLabel"] {
-        color: var(--text-secondary) !important;
-        font-weight: 500 !important;
-        text-transform: uppercase !important;
-        letter-spacing: 1px !important;
-        font-size: 0.8rem !important;
-    }
-    
-    /* Divider */
-    .custom-divider {
-        height: 1px;
-        background: linear-gradient(90deg, transparent, var(--border-color), transparent);
-        margin: 2rem 0;
-    }
-    
-    /* Sidebar User Card */
-    .user-card {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
-        border-radius: 14px;
-        padding: 1.2rem;
-        margin-top: 1rem;
-    }
-    
-    .user-email {
-        color: var(--text-primary);
-        font-weight: 500;
-        font-size: 0.9rem;
-    }
-    
-    .user-status {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        margin-top: 0.5rem;
-        color: var(--accent);
-        font-size: 0.8rem;
-    }
-    
-    .status-dot {
-        width: 8px;
-        height: 8px;
-        background: var(--accent);
-        border-radius: 50%;
-        animation: pulse 2s infinite;
-    }
-    
-    /* Empty State */
-    .empty-state {
-        text-align: center;
-        padding: 4rem 2rem;
-        color: var(--text-secondary);
-    }
-    
-    .empty-state-icon {
-        font-size: 4rem;
-        margin-bottom: 1rem;
-        opacity: 0.5;
-    }
-    
-    .empty-state-text {
-        font-size: 1.1rem;
-        max-width: 300px;
-        margin: 0 auto;
-        line-height: 1.6;
-    }
-    
-    /* Footer */
-    .app-footer {
-        text-align: center;
-        padding: 2rem 0;
-        color: var(--text-secondary);
-        font-size: 0.85rem;
-        border-top: 1px solid var(--border-color);
-        margin-top: 3rem;
-    }
-    
-    .footer-brand {
-        background: var(--gradient-1);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-weight: 700;
-    }
-    
-    /* Last Updated */
-    .last-updated {
-        font-size: 0.75rem;
-        color: var(--text-secondary);
-        text-align: right;
-        margin-top: 0.5rem;
-    }
-    
-    /* Plotly Chart Override */
-    .js-plotly-plot {
-        border-radius: 16px !important;
-        overflow: hidden !important;
-    }
-</style>
-""", unsafe_allow_html=True)
+def load_css(file_name):
+    with open(file_name) as f:
+        st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+
+load_css('assets/style.css')
 
 # ===========================
 # HELPER FUNCTIONS
@@ -1444,27 +845,19 @@ if 'user_email' not in st.session_state:
 # SIDEBAR
 # ===========================
 
+# ===========================
+# SIDEBAR (SIMPLIFIED)
+# ===========================
+
 with st.sidebar:
-    # Logo
+    # Minimal Logo/Brand
     st.markdown("""
-    <div class="logo-container">
-        <div class="logo-icon">⚡</div>
-        <div class="logo-text">Stock<span>Pulse</span></div>
+    <div class="sidebar-logo-container">
+        <div class="sidebar-logo-text">STOCK<span style="color:#00F0FF">PULSE</span></div>
     </div>
     """, unsafe_allow_html=True)
     
-    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
-    
-    # Navigation
-    page = st.radio(
-        "Navigation",
-        ["🏠 Dashboard", "📊 Portfolio", "🔔 Alerts", "⚙️ Settings", "🚀 Run Scan"],
-        label_visibility="collapsed"
-    )
-    
-    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
-    
-    # User Card
+    # User Profile (Compact)
     db = next(get_db())
     user = db.query(User).filter(User.email == st.session_state.user_email).first()
     
@@ -1473,24 +866,33 @@ with st.sidebar:
         alerts_count = db.query(Notification).filter(Notification.user_id == user.id).count()
         
         st.markdown(f"""
-        <div class="user-card">
-            <div class="user-email">👤 {st.session_state.user_email}</div>
-            <div class="user-status">
-                <div class="status-dot"></div>
-                Active
+        <div style="background: var(--glass); border-radius: 8px; padding: 10px; border: 1px solid var(--glass-border);">
+            <div style="color: #fff; font-size: 0.8rem;">👤 {st.session_state.user_email.split('@')[0]}</div>
+            <div style="display: flex; gap: 10px; margin-top: 5px;">
+                <span style="font-size: 0.7rem; color: #888;">Stocks: <b style="color: #fff">{holdings_count}</b></span>
+                <span style="font-size: 0.7rem; color: #888;">Alerts: <b style="color: #fff">{alerts_count}</b></span>
             </div>
         </div>
         """, unsafe_allow_html=True)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Stocks", holdings_count)
-        with col2:
-            st.metric("Alerts", alerts_count)
     
     db.close()
+    
+    st.markdown("---")
+    st.caption("v2.5 - Cyber Update ⚡")
+
+# ===========================
+# TOP NAVIGATION
+# ===========================
+
+# Horizontal Radio Button Group
+page = st.radio(
+    "Navigation",
+    ["🏠 Dashboard", "📊 Portfolio", "🔔 Alerts", "🚀 Run Scan", "⚙️ Settings"],
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+st.markdown('<div class="neon-divider"></div>', unsafe_allow_html=True)
 
 # ===========================
 # PAGE 1: DASHBOARD
@@ -1684,7 +1086,7 @@ if page == "🏠 Dashboard":
         if portfolio_symbols:
             st.caption(f"Checking: {', '.join(portfolio_symbols)}")
         
-        broker_alerts = get_broker_rating_alerts(portfolio_symbols)
+        broker_alerts = get_broker_rating_alerts_v4(portfolio_symbols)
         
         if broker_alerts:
             for alert in broker_alerts[:5]:
@@ -1737,6 +1139,7 @@ if page == "🏠 Dashboard":
                     <div style="font-size: 0.85rem; color: #00D4FF; margin-bottom: 6px;">
                         {alert.get('previous_rating', '')} {'→' if alert.get('previous_rating') and alert.get('previous_rating') != 'N/A' else ''} <strong>{alert['new_rating']}</strong>
                     </div>
+                    {f"<div style='font-size: 0.85rem; color: #00FF88; margin-bottom: 6px;'>🎯 Target: {alert.get('old_target', 'N/A')} → <strong>{alert.get('new_target', 'N/A')}</strong></div>" if alert.get('new_target') and alert.get('new_target') != 'N/A' else ""}
                     {"<div style='font-size: 0.8rem; color: #8892A6; font-style: italic; margin-top: 6px;'>" + headline[:80] + ('...' if len(headline) > 80 else '') + "</div>" if headline else ""}
                 </div>
                 """, unsafe_allow_html=True)

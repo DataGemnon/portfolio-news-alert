@@ -1,0 +1,216 @@
+/* Import Google Fonts - Modern Athletic & Tech Typography */
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* Root Variables - Neon Cyberpunk Theme */
+:root {
+    --primary: #00F0FF;          /* Electric Cyan */
+    --primary-dim: #00F0FF20;
+    --secondary: #FF003C;        /* Cyber Pink */
+    --secondary-dim: #FF003C20;
+    --accent: #39FF14;           /* Neon Green */
+    --warning: #FIEE00;          /* Electric Yellow */
+    
+    --bg-dark: #050505;          /* Deepest Black */
+    --bg-panel: #0A0A0A;         /* Panel Black */
+    --bg-card: rgba(20, 20, 20, 0.6);
+    --bg-card-hover: rgba(30, 30, 30, 0.8);
+    
+    --glass: rgba(255, 255, 255, 0.03);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    
+    --text-primary: #FFFFFF;
+    --text-secondary: #94A3B8;
+    
+    --gradient-primary: linear-gradient(90deg, #00F0FF 0%, #0099FF 100%);
+    --gradient-glow: radial-gradient(circle at center, rgba(0, 240, 255, 0.15) 0%, transparent 70%);
+}
+
+/* Global Styles */
+.stApp {
+    background: var(--bg-dark);
+    background-image: 
+        radial-gradient(circle at 10% 20%, rgba(0, 240, 255, 0.03) 0%, transparent 40%),
+        radial-gradient(circle at 90% 80%, rgba(255, 0, 60, 0.03) 0%, transparent 40%);
+    font-family: 'Outfit', sans-serif;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: var(--bg-dark); 
+}
+::-webkit-scrollbar-thumb {
+    background: #333; 
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--primary); 
+}
+
+/* Hide Default Streamlit Elements */
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+
+/* Top Navigation Bar Styling */
+.stRadio > div {
+    display: flex;
+    flex-direction: row; /* Horizontal alignment */
+    gap: 8px;
+    background: rgba(10, 10, 10, 0.8);
+    backdrop-filter: blur(10px);
+    padding: 8px;
+    border-radius: 16px;
+    border: 1px solid var(--glass-border);
+    margin-bottom: 2rem;
+    overflow-x: auto;
+    justify-content: center; /* Center the nav */
+}
+
+.stRadio > div > label {
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 8px 20px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: 1px solid transparent;
+    font-weight: 600;
+    font-family: 'Outfit', sans-serif;
+    font-size: 0.95rem;
+    white-space: nowrap;
+}
+
+.stRadio > div > label:hover {
+    color: var(--primary);
+    background: rgba(0, 240, 255, 0.05);
+    border-color: rgba(0, 240, 255, 0.2);
+    box-shadow: 0 0 15px rgba(0, 240, 255, 0.1);
+}
+
+/* Selected Tab - We can't target the 'checked' state directly in CSS for Streamlit's radio easily without JS, 
+   but Streamlit adds a darker background. We rely on the general styling here. */
+[data-testid="stMarkdownContainer"] p {
+    font-size: 1rem;
+}
+
+/* Sidebar Minimization */
+[data-testid="stSidebar"] {
+    background: #050505;
+    border-right: 1px solid var(--glass-border);
+    width: 300px !important; /* Force width if possible, though Streamlit controls this */
+}
+
+/* Logo in Sidebar */
+.sidebar-logo-container {
+    padding: 1rem 0;
+    text-align: center;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.sidebar-logo-text {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.8rem;
+    font-weight: 900;
+    background: var(--gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: 2px;
+    text-shadow: 0 0 20px rgba(0, 240, 255, 0.3);
+}
+
+/* Cards */
+.glass-card {
+    background: var(--bg-card);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--glass-border);
+    border-radius: 20px;
+    padding: 1.5rem;
+    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.glass-card:hover {
+    transform: translateY(-5px) scale(1.02);
+    border-color: var(--primary);
+    box-shadow: 0 10px 40px -10px rgba(0, 240, 255, 0.2);
+    background: var(--bg-card-hover);
+}
+
+/* Headers */
+.section-header {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary);
+    margin: 2rem 0 1rem 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    letter-spacing: 1px;
+}
+
+.main-hero-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 3.5rem;
+    font-weight: 900;
+    line-height: 1.1;
+    background: linear-gradient(180deg, #FFFFFF 0%, #94A3B8 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0.5rem;
+    filter: drop-shadow(0 0 30px rgba(255, 255, 255, 0.1));
+}
+
+/* Metrics & Stats */
+.metric-value {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+}
+
+.metric-label {
+    font-family: 'Outfit', sans-serif;
+    color: var(--primary);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    font-weight: 600;
+    margin-top: 5px;
+}
+
+/* Buttons */
+.stButton > button {
+    background: linear-gradient(90deg, transparent 0%, rgba(0, 240, 255, 0.1) 100%) !important;
+    border: 1px solid var(--primary) !important;
+    color: var(--primary) !important;
+    font-family: 'Orbitron', sans-serif !important;
+    text-transform: uppercase !important;
+    letter-spacing: 2px !important;
+    padding: 0.6rem 1.5rem !important;
+    border-radius: 4px !important;
+    transition: all 0.3s ease !important;
+    box-shadow: 0 0 10px rgba(0, 240, 255, 0.1) !important;
+}
+
+.stButton > button:hover {
+    background: var(--primary) !important;
+    color: #000 !important;
+    box-shadow: 0 0 30px rgba(0, 240, 255, 0.5) !important;
+    transform: translateY(-2px) !important;
+}
+
+/* Divider */
+.neon-divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--primary), transparent);
+    margin: 2rem 0;
+    opacity: 0.5;
+    box-shadow: 0 0 10px var(--primary);
+}

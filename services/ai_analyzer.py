@@ -181,3 +181,85 @@ Do not include any text before or after the JSON."""
             return True
         
         return False
+
+    def extract_broker_rating(self, title: str, text: str = "", symbol: str = None) -> Dict:
+        """
+        Extract structured broker data from a headline using AI
+        Used when regex fails to identify broker or rating details
+        """
+        # Check cache if available (cache key based on title + symbol)
+        cache_key = f"broker_extract_v2:{hash(title)}:{symbol or 'ANY'}"
+        if self.redis_client:
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
+                
+        # Construct prompt
+        context_instruction = ""
+        if symbol:
+            context_instruction = f"""
+            CRITICAL INSTRUCTION:
+            You are analyzing this news specifically for the stock **{symbol}**.
+            - If the rating change/action is NOT for {symbol} (e.g. it is for a competitor or another company mentioned), return "action": "N/A".
+            - Example: If headline is "Qualcomm Downgrade flags Apple risk" and symbol is "AAPL", action is "N/A" (because Qualcomm was downgraded, not Apple).
+            """
+
+        prompt = f"""Extract broker rating details from this financial news headline:
+        {context_instruction}
+        
+        Headline: "{title}"
+        Context: "{text[:500]}"
+        
+        Identify:
+        1. Broker Name (e.g. Goldman Sachs, Mizuho, Raymond James)
+        2. Action (Upgrade, Downgrade, Initiate, Reiterate, etc.)
+        3. Old Rating (if mentioned, otherwise "N/A")
+        4. New Rating (Buy, Sell, Hold, Outperform, etc., otherwise "N/A")
+        5. Old Price Target (if mentioned, extract value e.g. "150", otherwise "N/A")
+        6. New Price Target (if mentioned, extract value e.g. "180", otherwise "N/A")
+        
+        Respond ONLY with a JSON object:
+        {{
+            "broker": "Name",
+            "action": "Action",
+            "old_rating": "Rating",
+            "new_rating": "Rating",
+            "old_target": "Price",
+            "new_target": "Price"
+        }}
+        """
+        
+        try:
+            message = self.client.messages.create(
+                model=self.model,
+                max_tokens=300,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            response_text = message.content[0].text.strip()
+            # Clean potential markdown
+            response_text = response_text.replace('```json', '').replace('```', '').strip()
+            result = json.loads(response_text)
+            
+            # Cache result
+            if self.redis_client:
+                try:
+                    self.redis_client.setex(cache_key, 86400 * 7, json.dumps(result)) # Cache for 7 days
+                except:
+                    pass
+            
+            return result
+            
+        except Exception as e:
+            print(f"AI Extraction Error: {e}")
+            return {
+                "broker": "Analyst",
+                "action": "N/A",
+                "old_rating": "N/A",
+                "new_rating": "N/A",
+                "old_target": "N/A",
+                "new_target": "N/A"
+            }
