@@ -13,6 +13,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import requests
 import time
+import textwrap
 
 from models.database import (
     init_db, get_db, User, UserHolding, NewsArticle, 
@@ -960,131 +961,98 @@ if page == "🏠 Dashboard":
         st.error("User not found. Run `python main.py setup` to create demo user.")
         db.close()
         st.stop()
-    
-    # Main Metrics
+        
+    # Query holdings for use in Portfolio section and Broker Alerts
     holdings = db.query(UserHolding).filter(UserHolding.user_id == user.id).all()
-    recent_alerts = db.query(Notification).filter(
-        Notification.user_id == user.id
-    ).order_by(Notification.sent_at.desc()).limit(7).all()
     
+    # ========================
+    # 🚨 HIGH IMPACT ALERTS (New Dedicated Section)
+    # ========================
     high_impact_alerts = db.query(Notification).join(NewsArticle).join(NewsAnalysis).filter(
         Notification.user_id == user.id,
         NewsAnalysis.impact_score >= 7
-    ).count()
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1) 0%, rgba(0, 255, 136, 0.05) 100%);
-            border: 1px solid rgba(0, 212, 255, 0.2);
-            border-radius: 16px;
-            padding: 1.5rem;
-            text-align: center;
-        ">
-            <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">📊</div>
-            <div style="font-size: 2rem; font-weight: 800; color: #00D4FF; font-family: 'JetBrains Mono', monospace;">{len(holdings)}</div>
-            <div style="font-size: 0.85rem; color: #8892A6; text-transform: uppercase; letter-spacing: 1px;">Tracked</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, rgba(255, 184, 0, 0.1) 0%, rgba(255, 107, 53, 0.05) 100%);
-            border: 1px solid rgba(255, 184, 0, 0.2);
-            border-radius: 16px;
-            padding: 1.5rem;
-            text-align: center;
-        ">
-            <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">🔔</div>
-            <div style="font-size: 2rem; font-weight: 800; color: #FFB800; font-family: 'JetBrains Mono', monospace;">{len(recent_alerts)}</div>
-            <div style="font-size: 0.85rem; color: #8892A6; text-transform: uppercase; letter-spacing: 1px;">Alerts</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, rgba(255, 51, 102, 0.1) 0%, rgba(255, 107, 53, 0.05) 100%);
-            border: 1px solid rgba(255, 51, 102, 0.2);
-            border-radius: 16px;
-            padding: 1.5rem;
-            text-align: center;
-        ">
-            <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">⚠️</div>
-            <div style="font-size: 2rem; font-weight: 800; color: #FF3366; font-family: 'JetBrains Mono', monospace;">{high_impact_alerts}</div>
-            <div style="font-size: 0.85rem; color: #8892A6; text-transform: uppercase; letter-spacing: 1px;">High Impact</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col4:
-        status_color = "#00FF88" if user.active else "#FF3366"
-        status_icon = "✓" if user.active else "✗"
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, rgba(0, 255, 136, 0.1) 0%, rgba(0, 212, 255, 0.05) 100%);
-            border: 1px solid rgba(0, 255, 136, 0.2);
-            border-radius: 16px;
-            padding: 1.5rem;
-            text-align: center;
-        ">
-            <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">⚡</div>
-            <div style="font-size: 2rem; font-weight: 800; color: {status_color}; font-family: 'JetBrains Mono', monospace;">{status_icon}</div>
-            <div style="font-size: 0.85rem; color: #8892A6; text-transform: uppercase; letter-spacing: 1px;">Active</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    st.markdown('<div style="margin: 2rem 0;"></div>', unsafe_allow_html=True)
-    
-    # Two Column Layout
-    col1, col2 = st.columns([2, 1])
+    ).order_by(Notification.sent_at.desc()).limit(5).all()
+
+    if high_impact_alerts:
+        st.markdown('<div class="section-header">🔥 Critical Updates</div>', unsafe_allow_html=True)
+        
+        # Display as a grid of prominent cards
+        hi_cols = st.columns(3)
+        for i, notif in enumerate(high_impact_alerts):
+            article = db.query(NewsArticle).filter(NewsArticle.id == notif.article_id).first()
+            analysis = db.query(NewsAnalysis).filter(NewsAnalysis.article_id == notif.article_id).first()
+            
+            if article and analysis:
+                with hi_cols[i % 3]:
+                    st.markdown(f"""
+                    <div class="high-impact-card" style="height: 100%;">
+                        <div style="color: #EF4444; font-weight: 700; font-size: 0.8rem; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 6px;">
+                            <span style="width: 8px; height: 8px; background: #EF4444; border-radius: 50%;"></span> CRITICAL IMPACT
+                        </div>
+                        <div style="font-size: 1.1rem; font-weight: 700; color: #fff; margin-bottom: 0.5rem; line-height: 1.4;">
+                            {article.title}
+                        </div>
+                        <div style="font-size: 0.9rem; color: #94A3B8; margin-bottom: 1rem;">
+                            {analysis.summary[:100]}...
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #334155; padding-top: 0.75rem;">
+                            <div style="background: rgba(59, 130, 246, 0.1); color: #3B82F6; padding: 2px 8px; border-radius: 6px; font-weight: 600; font-size: 0.8rem;">
+                                {article.symbol}
+                            </div>
+                            <div style="color: #64748B; font-size: 0.8rem;">
+                                {article.published_date.strftime('%b %d, %H:%M')}
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        
+        st.markdown('<div style="margin: 2rem 0;"></div>', unsafe_allow_html=True)
+
+    # ========================
+    # MAIN LAYOUT (Wider Columns)
+    # ========================
+    # Changed from [2, 1] to [7, 5] for better balance and legibility
+    col1, col2 = st.columns([7, 5])
     
     with col1:
         st.markdown("""
         <div class="section-header">
-            <div class="section-icon">💼</div>
-            <div class="section-title">Your Portfolio</div>
+            <div class="section-title">💼 Your Portfolio</div>
         </div>
         """, unsafe_allow_html=True)
         
         if holdings:
-            # Display beautiful stock cards
+            # Display beautiful stock cards in a 2-column sub-grid inside the left main column
             cols = st.columns(2)
             for idx, holding in enumerate(holdings):
                 profile = get_company_profile_cached(holding.symbol)
                 symbol, company_name, sector, sector_emoji = render_stock_card(holding.symbol, profile)
                 with cols[idx % 2]:
+                    # Updated style for card display
                     display_stock_card_beautiful(symbol, company_name, sector, sector_emoji)
         else:
             st.info("📊 No stocks in your portfolio yet. Head to Portfolio to add some!")
         
-        # ========================
-        # BROKER RATING ALERTS
-        # ========================
-        st.markdown('<div style="margin-top: 2rem;"></div>', unsafe_allow_html=True)
+        # BROKER RATING ALERTS (Kept in main column but full width of it)
+        st.markdown('<div style="margin-top: 3rem;"></div>', unsafe_allow_html=True)
         
         # Header with refresh button
         col_header, col_refresh = st.columns([4, 1])
         with col_header:
             st.markdown("""
             <div class="section-header">
-                <div class="section-icon">📈</div>
-                <div class="section-title">Broker Rating Changes</div>
+                <div class="section-title">📈 Upgrade & Downgrade Alerts</div>
             </div>
             """, unsafe_allow_html=True)
         with col_refresh:
-            if st.button("🔄", help="Refresh broker alerts (clears cache)"):
+            if st.button("🔄 Refresh", help="Refresh broker alerts (clears cache)"):
                 st.cache_data.clear()
                 st.rerun()
         
         # Fetch broker rating changes for portfolio stocks
         portfolio_symbols = [h.symbol for h in holdings] if holdings else []
-        
-        # Show what symbols we're checking
         if portfolio_symbols:
-            st.caption(f"Checking: {', '.join(portfolio_symbols)}")
+            st.caption(f"Monitoring: {', '.join(portfolio_symbols)}")
         
         broker_alerts = get_broker_rating_alerts_v4(portfolio_symbols)
         
@@ -1092,116 +1060,133 @@ if page == "🏠 Dashboard":
             for alert in broker_alerts[:5]:
                 action_type = alert.get('action_type', '')
                 is_negative = action_type in ['downgrade', 'target_lowered']
-                is_premium = alert.get('is_premium_broker', False)
                 
-                # Color coding
+                # Color coding (Updated for new theme)
                 if is_negative:
-                    border_color = '#FF3366'
+                    border_color = '#EF4444' # Red
                     action_label = '⬇️ DOWNGRADE'
-                    bg_gradient = 'rgba(255, 51, 102, 0.15)'
+                    bg_color = 'rgba(239, 68, 68, 0.05)'
+                    badge_color = '#EF4444'
                 elif action_type == 'upgrade':
-                    border_color = '#00FF88'
+                    border_color = '#10B981' # Green
                     action_label = '⬆️ UPGRADE'
-                    bg_gradient = 'rgba(0, 255, 136, 0.15)'
+                    bg_color = 'rgba(16, 185, 129, 0.05)'
+                    badge_color = '#10B981'
                 elif action_type == 'initiated':
-                    border_color = '#00D4FF'
+                    border_color = '#3B82F6' # Blue
                     action_label = '🆕 INITIATED'
-                    bg_gradient = 'rgba(0, 212, 255, 0.15)'
+                    bg_color = 'rgba(59, 130, 246, 0.05)'
+                    badge_color = '#3B82F6'
                 else:
-                    border_color = '#8892A6'
+                    border_color = '#64748B' # Slate
                     action_label = '📊 RATING'
-                    bg_gradient = 'rgba(136, 146, 166, 0.1)'
+                    bg_color = 'rgba(100, 116, 139, 0.05)'
+                    badge_color = '#64748B'
                 
-                premium_badge = '⭐ ' if is_premium else ''
                 headline = alert.get('headline', '')
-                source_badge = f"<span style='font-size:0.65rem;background:#1A2438;color:#8892A6;padding:2px 6px;border-radius:4px;margin-left:8px;'>{alert.get('source', 'API')}</span>" if alert.get('source') else ''
                 
-                st.markdown(f"""
+                target_html = ""
+                if alert.get('new_target') and alert.get('new_target') != 'N/A':
+                    target_html = f"<div style='font-size: 0.9rem; color: #10B981; margin-bottom: 6px;'>🎯 Target: {alert.get('old_target', 'N/A')} → <strong>{alert.get('new_target', 'N/A')}</strong></div>"
+                    
+                headline_html = ""
+                if headline:
+                    headline_html = f"<div style='font-size: 0.85rem; color: #94A3B8; font-style: italic; margin-top: 8px; border-top: 1px solid #334155; padding-top: 6px;'>" + headline[:100] + ('...' if len(headline) > 100 else '') + "</div>"
+
+                content = f"""
                 <div style="
-                    background: linear-gradient(135deg, {bg_gradient} 0%, rgba(19, 26, 43, 0.95) 100%);
-                    border: 1px solid #1E2A42;
-                    border-left: 5px solid {border_color};
-                    border-radius: 12px;
-                    padding: 1rem 1.25rem;
-                    margin-bottom: 0.75rem;
+                  background: {bg_color};
+                  border: 1px solid {border_color}40;
+                  border-left: 4px solid {border_color};
+                  border-radius: 8px;
+                  padding: 1rem;
+                  margin-bottom: 0.75rem;
                 ">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
-                        <div style="font-size: 1.2rem; font-weight: 800; color: #FFFFFF; font-family: 'JetBrains Mono', monospace;">
-                            {alert['symbol']} {action_label}
-                        </div>
-                        <div style="font-size: 0.7rem; color: #8892A6; background: #1A2438; padding: 4px 8px; border-radius: 8px;">
-                            {alert['date']}
-                        </div>
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                    <div style="font-weight: 700; color: {badge_color};">
+                      {alert['symbol']} {action_label}
                     </div>
-                    <div style="font-size: 0.9rem; color: #FFFFFF; margin-bottom: 6px;">
-                        {premium_badge}{alert['broker']}{source_badge}
+                    <div style="font-size: 0.8rem; color: #94A3B8;">
+                      {alert['date']}
                     </div>
-                    <div style="font-size: 0.85rem; color: #00D4FF; margin-bottom: 6px;">
-                        {alert.get('previous_rating', '')} {'→' if alert.get('previous_rating') and alert.get('previous_rating') != 'N/A' else ''} <strong>{alert['new_rating']}</strong>
-                    </div>
-                    {f"<div style='font-size: 0.85rem; color: #00FF88; margin-bottom: 6px;'>🎯 Target: {alert.get('old_target', 'N/A')} → <strong>{alert.get('new_target', 'N/A')}</strong></div>" if alert.get('new_target') and alert.get('new_target') != 'N/A' else ""}
-                    {"<div style='font-size: 0.8rem; color: #8892A6; font-style: italic; margin-top: 6px;'>" + headline[:80] + ('...' if len(headline) > 80 else '') + "</div>" if headline else ""}
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                    <span style="font-weight: 600; color: #F8FAFC;">{alert['broker']}</span>
+                    <span style="font-size: 0.8rem; color: #64748B; background: #1E293B; padding: 2px 6px; border-radius: 4px;">{alert.get('source', 'API')}</span>
+                  </div>
+                  
+                  <div style="font-size: 0.9rem; color: #F8FAFC; margin-bottom: 6px;">
+                    Rating: {alert.get('previous_rating', '')} {'→' if alert.get('previous_rating') and alert.get('previous_rating') != 'N/A' else ''} <strong>{alert['new_rating']}</strong>
+                  </div>
+                  
+                  {target_html}
+                  {headline_html}
                 </div>
-                """, unsafe_allow_html=True)
+                """
+                st.markdown(textwrap.dedent(content), unsafe_allow_html=True)
         else:
             st.markdown("""
-            <div style="
-                background: rgba(19, 26, 43, 0.5);
-                border: 1px dashed #1E2A42;
-                border-radius: 12px;
-                padding: 2rem;
-                text-align: center;
-                color: #8892A6;
-            ">
-                <div style="font-size: 2rem; margin-bottom: 0.5rem;">📊</div>
-                <div>No recent broker rating changes for your portfolio</div>
+            <div style="text-align: center; padding: 2rem; color: #64748B; background: #1E293B; border-radius: 12px;">
+                No recent broker rating changes
             </div>
             """, unsafe_allow_html=True)
     
     with col2:
         st.markdown("""
         <div class="section-header">
-            <div class="section-icon">🔥</div>
-            <div class="section-title">Recent Alerts</div>
+            <div class="section-title">🔔 Recent News Feed</div>
         </div>
         """, unsafe_allow_html=True)
         
+        # Recent Alerts Feed - Now wider and cleaner
+        recent_alerts = db.query(Notification).filter(
+            Notification.user_id == user.id
+        ).order_by(Notification.sent_at.desc()).limit(10).all()
+        
         if recent_alerts:
-            for notif in recent_alerts[:5]:
+            for notif in recent_alerts:
                 article = db.query(NewsArticle).filter(NewsArticle.id == notif.article_id).first()
                 analysis = db.query(NewsAnalysis).filter(NewsAnalysis.article_id == notif.article_id).first()
-                
                 if article and analysis:
-                    impact = analysis.impact_score
-                    if impact >= 7:
-                        impact_class = "impact-high"
-                        impact_emoji = "🔴"
-                    elif impact >= 5:
-                        impact_class = "impact-medium"
-                        impact_emoji = "🟡"
-                    else:
-                        impact_class = "impact-low"
-                        impact_emoji = "🟢"
-                    
-                    urgent_class = "urgent" if analysis.urgency in ['Immediate', 'Hours'] else "normal"
+                    # Clean Modern Alert Card
+                    impact_color = "#10B981" # Green default
+                    if analysis.impact_score >= 7: impact_color = "#EF4444" # Red
+                    elif analysis.impact_score >= 5: impact_color = "#F59E0B" # Amber
                     
                     st.markdown(f"""
-                    <div class="alert-card {urgent_class}">
-                        <div class="alert-symbol">{article.symbol}</div>
-                        <div class="alert-title">{analysis.summary[:60]}...</div>
-                        <div class="alert-meta">
-                            <span class="impact-badge {impact_class}">{impact_emoji} {impact}/10</span>
-                            <span>{analysis.urgency}</span>
+                    <div style="
+                        background: #1E293B;
+                        border: 1px solid #334155;
+                        border-radius: 12px;
+                        padding: 1.25rem;
+                        margin-bottom: 1rem;
+                        transition: all 0.2s;
+                    ">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <span style="background: rgba(59, 130, 246, 0.1); color: #3B82F6; font-family: 'JetBrains Mono', monospace; font-weight: 700; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem;">
+                                    {article.symbol}
+                                </span>
+                                <span style="font-size: 0.8rem; color: #94A3B8;">{article.published_date.strftime('%H:%M')}</span>
+                            </div>
+                            <span style="color: {impact_color}; font-weight: 600; font-size: 0.8rem;">
+                                Impact {analysis.impact_score}/10
+                            </span>
+                        </div>
+                        <div style="font-size: 1rem; font-weight: 600; color: #F8FAFC; margin-bottom: 0.5rem; line-height: 1.4;">
+                            {article.title}
+                        </div>
+                        <div style="font-size: 0.9rem; color: #94A3B8; margin-bottom: 0.75rem;">
+                            {analysis.summary}
+                        </div>
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                            <span style="background: #0F172A; color: #64748B; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem;">{analysis.category}</span>
+                            <span style="background: #0F172A; color: #64748B; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem;">{analysis.urgency}</span>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
         else:
-            st.markdown("""
-            <div class="empty-state">
-                <div class="empty-state-icon">🔔</div>
-                <div class="empty-state-text">No alerts yet. Run a scan to get started!</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.info("No alerts yet.")
     
     st.markdown(f'<div class="last-updated">Last updated: {datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}</div>', unsafe_allow_html=True)
     
