@@ -182,6 +182,79 @@ Do not include any text before or after the JSON."""
         
         return False
 
+        return False
+
+    def analyze_macro_impact(self, title: str, text: str = "") -> Dict:
+        """
+        Analyze general news to detect HIGH IMPACT global market events
+        (e.g., Tariffs, Geopolitics, Federal Reserve, Major Policy)
+        """
+        # Check cache
+        cache_key = f"macro_analysis_v2:{hash(title)}"
+        if self.redis_client:
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
+        
+        prompt = f"""Analyze this news headline for GLOBAL MARKET IMPACT:
+        
+        Headline: "{title}"
+        Context: "{text[:300]}"
+        
+        Determine if this is a "Significant Global Market Event" that affects the BROADER MARKET (S&P 500, Nasdaq, Global Trade).
+        Examples of YES: 
+        - US imposes tariffs on China/Mexico/Canada
+        - Federal Reserve raises/cuts rates
+        - Major geopolitical conflict outbreak
+        - President signs major economic legislation
+        - US Bans export of chips
+        
+        Examples of NO:
+        - Individual stock earnings (e.g. "Apple earnings beat") -> NO, unless it crashes the whole market
+        - Minor economic data
+        - Opinion pieces
+        
+        Respond ONLY with a JSON using this structure:
+        {{
+            "is_global_event": <true/false>,
+            "category": "<Geopolitics|Trade|Monetary Policy|Economy|Regulation>",
+            "impact_score": <1-10>,
+            "summary": "<Very short summary>"
+        }}
+        """
+        
+        try:
+            message = self.client.messages.create(
+                model=self.model,
+                max_tokens=300,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            response_text = message.content[0].text.strip()
+            response_text = response_text.replace('```json', '').replace('```', '').strip()
+            result = json.loads(response_text)
+            
+            # Cache (longer duration for macro events as they don't change status)
+            if self.redis_client:
+                try:
+                    self.redis_client.setex(cache_key, 86400 * 2, json.dumps(result))
+                except:
+                    pass
+            
+            return result
+            
+        except Exception as e:
+            print(f"AI Macro Analysis Error: {e}")
+            return {
+                "is_global_event": False,
+                "category": "Other",
+                "impact_score": 0,
+                "summary": "Error analyzing"
+            }
+
     def extract_broker_rating(self, title: str, text: str = "", symbol: str = None) -> Dict:
         """
         Extract structured broker data from a headline using AI

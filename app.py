@@ -629,6 +629,93 @@ def get_fed_macro_alerts():
     # Return top 5 macro alerts
     return alerts[:5]
 
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def get_global_market_events():
+    """
+    Fetch and identify MAJOR global market events using AI
+    Replaces the old keyword-based "Fed Alerts"
+    """
+    alerts = []
+    
+    # Check for AI Service availability
+    try:
+        from services.ai_analyzer import AIAnalyzer
+        ai_analyzer = AIAnalyzer()
+    except:
+        return get_fed_macro_alerts() # Fallback to old function if AI fails
+        
+    try:
+        # Fetch General News from FMP
+        url = "https://financialmodelingprep.com/api/v4/general_news"
+        params = {
+            'apikey': settings.fmp_api_key,
+            'limit': 40 # Fetch more to scan
+        }
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        
+        seen_titles = set()
+        
+        if isinstance(data, list):
+            for article in data:
+                title = article.get('title', '')
+                if title in seen_titles: continue
+                seen_titles.add(title)
+                
+                # Pre-filter (optimization): Skip obviously irrelevant stuff to save AI tokens
+                # But be permissive to catch Tariffs/Trade/Geopolitics
+                
+                # Analyze with AI
+                try:
+                    analysis = ai_analyzer.analyze_macro_impact(title, article.get('text', ''))
+                    
+                    if analysis.get('is_global_event', False) or analysis.get('impact_score', 0) >= 7:
+                        pub_date_str = article.get('publishedDate', '')
+                        pub_date = datetime.strptime(pub_date_str, '%Y-%m-%d %H:%M:%S')
+                        
+                        # Only last 3 days
+                        if pub_date >= datetime.utcnow() - timedelta(days=3):
+                            category = analysis.get('category', 'Global Event')
+                            
+                            # Emoji mapping
+                            emoji_map = {
+                                'Geopolitics': '🌍',
+                                'Trade': '🚢',
+                                'Monetary Policy': '🏦',
+                                'Economy': '📉',
+                                'Regulation': '⚖️',
+                                'War': '⚔️'
+                            }
+                            emoji = emoji_map.get(category, '🌐')
+                            
+                            if 'Tariff' in category or 'tariff' in title.lower():
+                                emoji = '🛑'
+                            
+                            alerts.append({
+                                'title': title,
+                                'text': analysis.get('summary', article.get('text', '')[:150]),
+                                'url': article.get('url', ''),
+                                'source': article.get('site', 'News'),
+                                'date': pub_date.strftime('%Y-%m-%d %H:%M'),
+                                'timestamp': pub_date,
+                                'category': category,
+                                'emoji': emoji,
+                                'color': '#A855F7', # Purple for Global Events
+                                'is_breaking': analysis.get('impact_score', 0) >= 9
+                            })
+                except Exception as e:
+                    print(f"Error analyzing macro item: {e}")
+                    continue
+                    
+    except Exception as e:
+        print(f"Error fetching global events: {e}")
+        return get_fed_macro_alerts() # Fallback
+    
+    # Sort: Breaking first, then new to old
+    alerts.sort(key=lambda x: (x.get('is_breaking', False), x['timestamp']), reverse=True)
+    
+    return alerts[:5]
+
 # ===========================
 # STYLING
 # ===========================
@@ -908,29 +995,32 @@ if page == "🏠 Dashboard":
     # ========================
     # 🏛️ FED / MACRO ALERTS (affects ALL stocks)
     # ========================
-    macro_alerts = get_fed_macro_alerts()
+    # ========================
+    # 🌍 GLOBAL MARKET EVENTS (Replaces Fed/Macro)
+    # ========================
+    global_events = get_global_market_events()
     
-    if macro_alerts:
+    if global_events:
         st.markdown("""
         <div style="
-            background: linear-gradient(135deg, rgba(0, 212, 255, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%);
-            border: 2px solid rgba(0, 212, 255, 0.3);
+            background: linear-gradient(135deg, rgba(168, 85, 247, 0.15) 0%, rgba(79, 70, 229, 0.1) 100%);
+            border: 2px solid rgba(168, 85, 247, 0.3);
             border-radius: 16px;
             padding: 1.25rem;
             margin-bottom: 1.5rem;
         ">
             <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 1rem;">
-                <span style="font-size: 1.5rem;">🏛️</span>
-                <span style="font-size: 1.1rem; font-weight: 700; color: #00D4FF; text-transform: uppercase; letter-spacing: 1px;">
-                    Fed & Macro Alerts
+                <span style="font-size: 1.5rem;">🌍</span>
+                <span style="font-size: 1.1rem; font-weight: 700; color: #D8B4FE; text-transform: uppercase; letter-spacing: 1px;">
+                    Global Market Events
                 </span>
-                <span style="background: #FF3366; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600;">
-                    MARKET-WIDE
+                <span style="background: #A855F7; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600;">
+                    MACRO
                 </span>
             </div>
         """, unsafe_allow_html=True)
         
-        for alert in macro_alerts[:3]:
+        for alert in global_events[:3]:
             st.markdown(f"""
             <div style="
                 background: rgba(10, 14, 23, 0.7);
@@ -941,11 +1031,20 @@ if page == "🏠 Dashboard":
             ">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                     <div style="flex: 1;">
-                        <div style="font-size: 0.95rem; font-weight: 600; color: #FFFFFF; margin-bottom: 4px;">
-                            {alert['emoji']} {alert['title'][:80]}{'...' if len(alert['title']) > 80 else ''}
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                             <span style="font-size: 1.2rem;">{alert['emoji']}</span>
+                             <div style="font-size: 0.95rem; font-weight: 600; color: #FFFFFF;">
+                                {alert['title'][:80]}{'...' if len(alert['title']) > 80 else ''}
+                             </div>
                         </div>
-                        <div style="font-size: 0.8rem; color: #8892A6;">
-                            {alert['source']} · {alert['date']}
+                        <div style="font-size: 0.85rem; color: #CBD5E1; margin-bottom: 6px; padding-left: 28px;">
+                            {alert['text']}
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 10px; padding-left: 28px;">
+                            <div style="font-size: 0.8rem; color: #94A3B8;">
+                                {alert['source']} · {alert['date']}
+                            </div>
+                            <a href="{alert.get('url', '#')}" target="_blank" style="text-decoration: none; color: #D8B4FE; font-size: 0.75rem; font-weight: 600;">Read Source ↗</a>
                         </div>
                     </div>
                 </div>
@@ -995,12 +1094,14 @@ if page == "🏠 Dashboard":
                         <div style="font-size: 0.9rem; color: #94A3B8; margin-bottom: 1rem;">
                             {analysis.summary[:100]}...
                         </div>
-                        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #334155; padding-top: 0.75rem;">
                             <div style="background: rgba(59, 130, 246, 0.1); color: #3B82F6; padding: 2px 8px; border-radius: 6px; font-weight: 600; font-size: 0.8rem;">
                                 {article.symbol}
                             </div>
-                            <div style="color: #64748B; font-size: 0.8rem;">
-                                {article.published_date.strftime('%b %d, %H:%M')}
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <div style="color: #64748B; font-size: 0.8rem;">
+                                    {article.published_date.strftime('%b %d, %H:%M')}
+                                </div>
+                                <a href="{article.url}" target="_blank" style="text-decoration: none; color: #fff; background: #3B82F6; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">Read Source ↗</a>
                             </div>
                         </div>
                     </div>
@@ -1149,9 +1250,16 @@ if page == "🏠 Dashboard":
                 analysis = db.query(NewsAnalysis).filter(NewsAnalysis.article_id == notif.article_id).first()
                 if article and analysis:
                     # Clean Modern Alert Card
-                    impact_color = "#10B981" # Green default
-                    if analysis.impact_score >= 7: impact_color = "#EF4444" # Red
-                    elif analysis.impact_score >= 5: impact_color = "#F59E0B" # Amber
+                    impact_score = analysis.impact_score
+                    if impact_score >= 8:
+                        impact_color = "#EF4444" # Red
+                        impact_label = "CRITICAL"
+                    elif impact_score >= 5:
+                        impact_color = "#F59E0B" # Amber
+                        impact_label = "MAJOR"
+                    else:
+                        impact_color = "#10B981" # Green
+                        impact_label = "FYI"
                     
                     st.markdown(f"""
                     <div style="
@@ -1169,8 +1277,8 @@ if page == "🏠 Dashboard":
                                 </span>
                                 <span style="font-size: 0.8rem; color: #94A3B8;">{article.published_date.strftime('%H:%M')}</span>
                             </div>
-                            <span style="color: {impact_color}; font-weight: 600; font-size: 0.8rem;">
-                                Impact {analysis.impact_score}/10
+                            <span style="color: {impact_color}; font-weight: 700; font-size: 0.8rem; letter-spacing: 0.5px;">
+                                {impact_label}
                             </span>
                         </div>
                         <div style="font-size: 1rem; font-weight: 600; color: #F8FAFC; margin-bottom: 0.5rem; line-height: 1.4;">
@@ -1179,9 +1287,10 @@ if page == "🏠 Dashboard":
                         <div style="font-size: 0.9rem; color: #94A3B8; margin-bottom: 0.75rem;">
                             {analysis.summary}
                         </div>
-                        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                            <span style="background: #0F172A; color: #64748B; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem;">{analysis.category}</span>
                             <span style="background: #0F172A; color: #64748B; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem;">{analysis.urgency}</span>
+                        </div>
+                        <div style="margin-top: 0.75rem; text-align: right;">
+                             <a href="{article.url}" target="_blank" style="text-decoration: none; color: #3B82F6; font-size: 0.85rem; font-weight: 600;">Read Article ↗</a>
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -1318,7 +1427,8 @@ elif page == "🔔 Alerts":
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        days_filter = st.selectbox("Time Period", [7, 14, 30, 90, 365], index=2, format_func=lambda x: f"Last {x} days")
+        # Default changed to index 3 (90 days) to ensure data visibility
+        days_filter = st.selectbox("Time Period", [7, 14, 30, 90, 365], index=3, format_func=lambda x: f"Last {x} days")
     
     with col2:
         impact_filter = st.slider("Minimum Impact", 0, 10, 5)
@@ -1355,15 +1465,18 @@ elif page == "🔔 Alerts":
             
             if article and analysis:
                 impact = analysis.impact_score
-                if impact >= 7:
+                if impact >= 8:
                     impact_class = "impact-high"
-                    impact_emoji = "🔴"
+                    impact_label = "CRITICAL"
+                    impact_color = "#EF4444"
                 elif impact >= 5:
                     impact_class = "impact-medium"
-                    impact_emoji = "🟡"
+                    impact_label = "MAJOR"
+                    impact_color = "#F59E0B"
                 else:
                     impact_class = "impact-low"
-                    impact_emoji = "🟢"
+                    impact_label = "FYI"
+                    impact_color = "#10B981"
                 
                 urgent_class = "urgent" if analysis.urgency in ['Immediate', 'Hours'] else "normal"
                 
@@ -1375,13 +1488,14 @@ elif page == "🔔 Alerts":
                             <div class="alert-title">{article.title}</div>
                             <p style="color: var(--text-secondary); font-size: 0.9rem; margin: 0.75rem 0;">{analysis.summary}</p>
                         </div>
-                        <div class="impact-badge {impact_class}">{impact_emoji} {impact}/10</div>
+                        <div class="impact-badge" style="color: {impact_color}; border: 1px solid {impact_color}; background: {impact_color}10;">{impact_label}</div>
                     </div>
                     <div class="alert-meta">
                         <span>📅 {article.published_date.strftime('%Y-%m-%d %H:%M')}</span>
                         <span>📰 {article.source}</span>
                         <span>🏷️ {analysis.category}</span>
                         <span>⏰ {analysis.urgency}</span>
+                        <span style="margin-left: auto;"><a href="{article.url}" target="_blank" style="color: #00D4FF; text-decoration: none; font-weight: 600;">Read Source ↗</a></span>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
