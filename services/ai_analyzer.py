@@ -1,6 +1,7 @@
 import anthropic
 import json
-from typing import Dict, Optional
+import asyncio
+from typing import Dict, Optional, List
 from config.settings import settings
 
 try:
@@ -12,6 +13,7 @@ except ImportError:
 class AIAnalyzer:
     def __init__(self):
         self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        self.async_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         
         # Redis optionnel (pas disponible sur Streamlit Cloud)
         if settings.redis_url and redis is not None:
@@ -155,9 +157,153 @@ Do not include any text before or after the JSON."""
                 'keywords': 'market, update, news',
                 'affected_sector': 'Individual Stock Only'
             }
-    
+    async def analyze_news_impact_async(self, news_item: Dict, user_holding: Optional[Dict] = None) -> Dict:
+        """Async version of analyze_news_impact"""
+        # Check cache
+        cache_key = f"analysis:{news_item.get('url', '')}"
+        if self.redis_client:
+            try:
+                cached = self.redis_client.get(cache_key)
+                if cached:
+                    return json.loads(cached)
+            except:
+                pass
+        
+        # Prepare context
+        symbol = news_item.get('symbol', 'Unknown')
+        title = news_item.get('title', '')
+        content = news_item.get('text', '')[:2000]
+        source = news_item.get('site', '')
+        
+        holding_context = ""
+        if user_holding:
+            holding_context = f"\nUser Position: Holds {user_holding.get('quantity', 0)} shares at avg cost ${user_holding.get('avg_cost', 0)}"
+        
+        prompt = f"""Analyze this financial news article for investment impact:
+
+Symbol: {symbol}
+Title: {title}
+Source: {source}
+Content: {content}
+{holding_context}
+
+Provide a structured analysis with the following:
+
+1. **Impact Score** (0-10 scale):
+   - 0-2: Negligible impact
+   - 3-4: Minor impact
+   - 5-6: Moderate impact
+   - 7-8: Significant impact
+   - 9-10: Major/Critical impact
+
+2. **Sentiment** (-2 to +2 scale):
+   - -2: Very Negative
+   - -1: Negative
+   - 0: Neutral
+   - +1: Positive
+   - +2: Very Positive
+
+3. **Urgency** (choose one):
+   - Immediate: Requires attention within hours
+   - Hours: Actionable within 24 hours
+   - Days: Monitor over several days
+   - Long-term: Weeks to months timeframe
+
+4. **Category** (choose one):
+   - Earnings: Earnings reports, guidance, surprises
+   - Management: Leadership changes, strategy shifts
+   - Regulatory: Legal, compliance, government action
+   - Product: New products, services, innovations
+   - Market: Macro conditions, sector trends
+   - Legal: Lawsuits, investigations
+   - M&A: Mergers, acquisitions, partnerships
+   - Financial: Debt, buybacks, dividends
+   - Other: Doesn't fit above categories
+
+5. **Summary**: Maximum 10 words - ultra-concise headline
+
+6. **Keywords**: 3-5 key terms (comma-separated)
+
+7. **Affected Sector**: If this news impacts a broader sector beyond the single stock, name it. Otherwise, say "Individual Stock Only"
+
+Respond ONLY with valid JSON in this exact format:
+{{
+    "impact_score": <number 0-10>,
+    "sentiment": <number -2 to 2>,
+    "urgency": "<Immediate|Hours|Days|Long-term>",
+    "category": "<category>",
+    "summary": "<10 words max>",
+    "keywords": "<3-5 keywords>",
+    "affected_sector": "<sector or Individual Stock Only>"
+}}
+
+Do not include any text before or after the JSON."""
+
+        try:
+            message = await self.async_client.messages.create(
+                model=self.model,
+                max_tokens=1000,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            response_text = message.content[0].text.strip()
+            response_text = response_text.replace('```json', '').replace('```', '').strip()
+            result = json.loads(response_text)
+            
+            # Set defaults
+            result.setdefault('impact_score', 5)
+            result.setdefault('sentiment', 0)
+            result.setdefault('urgency', 'Days')
+            result.setdefault('category', 'Other')
+            result.setdefault('summary', title[:150])
+            result.setdefault('affected_sector', 'Individual Stock Only')
+            
+            if self.redis_client:
+                try:
+                    self.redis_client.setex(cache_key, 86400, json.dumps(result))
+                except:
+                    pass
+            
+            return result
+            
+        except Exception as e:
+            print(f"Async AI Analysis Error: {e}")
+            words = title.split()[:10] if title else []
+            short_summary = ' '.join(words) if words else 'News update'
+            
+            return {
+                'impact_score': 5,
+                'sentiment': 0,
+                'urgency': 'Days',
+                'category': 'Other',
+                'summary': short_summary,
+                'keywords': 'market, update, news',
+                'affected_sector': 'Individual Stock Only'
+            }
+    async def batch_analyze_async(self, news_items: list, user_holdings: Dict = None) -> list:
+        """Analyze multiple news items in parallel (async)"""
+        if not news_items:
+            return []
+            
+        tasks = []
+        for news in news_items:
+            symbol = news.get('symbol', '')
+            holding = user_holdings.get(symbol) if user_holdings else None
+            tasks.append(self.analyze_news_impact_async(news, holding))
+            
+        # Run all analysis tasks in parallel
+        analyses = await asyncio.gather(*tasks)
+        
+        # Merge results back into news items
+        results = []
+        for news, analysis in zip(news_items, analyses):
+            news_with_analysis = {**news, 'analysis': analysis}
+            results.append(news_with_analysis)
+        
+        return results
+
     def batch_analyze(self, news_items: list, user_holdings: Dict = None) -> list:
-        """Analyze multiple news items"""
+        """Analyze multiple news items (legacy sync)"""
         results = []
         
         for news in news_items:

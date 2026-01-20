@@ -113,7 +113,7 @@ class PortfolioNewsMonitor:
         db.add(notification)
         db.commit()
     
-    def process_user_portfolio(self, db: Session, user: User):
+    async def process_user_portfolio(self, db: Session, user: User):
         """Process news for a single user's portfolio"""
         print(f"Processing portfolio for user: {user.email}")
         
@@ -156,23 +156,29 @@ class PortfolioNewsMonitor:
         news_items = self.deduplicator.deduplicate(news_items)
         print(f"  After deduplication: {len(news_items)} unique items")
         
-        # Analyze news items
-        analyzed_news = []
-        for news in news_items:
-            symbol = news.get('symbol', '')
-            holding = holdings_dict.get(symbol)
-            
-            # Analyze with AI
-            analysis = self.ai_analyzer.analyze_news_impact(news, holding)
+        # Optimization: Limit to top 20 items (upped from 15 thanks to async speed)
+        if len(news_items) > 20:
+            print(f"  Limiting analysis to top 20 items (from {len(news_items)}) for performance")
+            news_items = news_items[:20]
+        
+        # Analyze news items (ASYNC)
+        print("  Analyzing news with AI (Parallel)...")
+        # Prepare news items with context for batch analysis
+        analyzed_news_results = await self.ai_analyzer.batch_analyze_async(news_items, holdings_dict)
+        
+        processed_analyzed_news = []
+        for news_w_analysis in analyzed_news_results:
+            analysis = news_w_analysis['analysis']
             
             # Save to database
-            article = self.save_news_article(db, news, analysis)
+            article = self.save_news_article(db, news_w_analysis, analysis)
             
             # Check if we should notify
             if self.ai_analyzer.should_notify(analysis):
-                news['analysis'] = analysis
-                news['article_id'] = article.id
-                analyzed_news.append(news)
+                news_w_analysis['article_id'] = article.id
+                processed_analyzed_news.append(news_w_analysis)
+                
+        analyzed_news = processed_analyzed_news
         
         # 3. ANALYST UPDATES (Price Targets & Ratings)
         print(f"  Checking analyst updates...")
@@ -227,17 +233,22 @@ class PortfolioNewsMonitor:
                 broker_upgrades=broker_upgrades_data if upgrade_stats['has_upgrades'] else None
             )
             
+            # Always record notifications for news articles, regardless of email success
+            # This ensures items appear in the dashboard
+            for news in analyzed_news:
+                self.create_notification_record(db, user.id, news['article_id'])
+                
             if success:
-                # Record notifications for news articles
-                for news in analyzed_news:
-                    self.create_notification_record(db, user.id, news['article_id'])
+                print(f"  Email notification sent successfully")
+            else:
+                print(f"  Email notification skipped or failed (items still saved to DB)")
         else:
             print(f"  No items met notification threshold and no upgrades to report")
     
-    def run_monitoring_cycle(self):
-        """Run one complete monitoring cycle for all users"""
+    async def run_monitoring_cycle_async(self):
+        """Run one complete monitoring cycle for all users (Async)"""
         print(f"\n{'='*60}")
-        print(f"Starting monitoring cycle at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        print(f"Starting async monitoring cycle at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
         print(f"{'='*60}")
         
         db = next(get_db())
@@ -249,7 +260,7 @@ class PortfolioNewsMonitor:
             
             for user in users:
                 try:
-                    self.process_user_portfolio(db, user)
+                    await self.process_user_portfolio(db, user)
                 except Exception as e:
                     print(f"Error processing user {user.email}: {e}")
                     continue
@@ -260,6 +271,11 @@ class PortfolioNewsMonitor:
             print(f"Error in monitoring cycle: {e}")
         finally:
             db.close()
+            
+    def run_monitoring_cycle(self):
+        """Sync wrapper for async cycle (for scheduler compatibility)"""
+        import asyncio
+        asyncio.run(self.run_monitoring_cycle_async())
     
     def start_scheduler(self):
         """Start the scheduled monitoring"""

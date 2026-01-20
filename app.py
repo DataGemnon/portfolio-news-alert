@@ -1067,8 +1067,12 @@ if page == "🏠 Dashboard":
     # ========================
     # 🚨 HIGH IMPACT ALERTS (New Dedicated Section)
     # ========================
+    # Filter: Last 7 days only
+    cutoff_date = datetime.utcnow() - timedelta(days=7)
+    
     high_impact_alerts = db.query(Notification).join(NewsArticle).join(NewsAnalysis).filter(
         Notification.user_id == user.id,
+        NewsArticle.published_date >= cutoff_date,
         NewsAnalysis.impact_score >= 7
     ).order_by(Notification.sent_at.desc()).limit(5).all()
 
@@ -1240,8 +1244,10 @@ if page == "🏠 Dashboard":
         """, unsafe_allow_html=True)
         
         # Recent Alerts Feed - Now wider and cleaner
-        recent_alerts = db.query(Notification).filter(
-            Notification.user_id == user.id
+        # Filter: Last 7 days only
+        recent_alerts = db.query(Notification).join(NewsArticle).filter(
+            Notification.user_id == user.id,
+            NewsArticle.published_date >= cutoff_date
         ).order_by(Notification.sent_at.desc()).limit(10).all()
         
         if recent_alerts:
@@ -1427,8 +1433,8 @@ elif page == "🔔 Alerts":
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        # Default changed to index 3 (90 days) to ensure data visibility
-        days_filter = st.selectbox("Time Period", [7, 14, 30, 90, 365], index=3, format_func=lambda x: f"Last {x} days")
+        # Default changed to index 0 (7 days) as per user request
+        days_filter = st.selectbox("Time Period", [7, 14, 30, 90, 365], index=0, format_func=lambda x: f"Last {x} days")
     
     with col2:
         impact_filter = st.slider("Minimum Impact", 0, 10, 5)
